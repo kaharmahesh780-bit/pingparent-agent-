@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "61842764491",
+    "project_id": "pingparent",
+    "storage_bucket": "pingparent.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:61842764491:android:544389c3b5a36f455ba14e",
+        "android_client_info": {
+          "package_name": "com.pingparent.agent"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAAtK-1osRg9smUjV1aMRVc9s3op7O6bOA"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
