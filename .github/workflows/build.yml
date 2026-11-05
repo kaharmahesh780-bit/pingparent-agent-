@@ -19,9 +19,6 @@ jobs:
         java-version: '17'
         distribution: 'temurin'
 
-    - name: Setup Android SDK
-      uses: android-actions/setup-android@v3
-
     - name: Move Config File
       run: |
         mkdir -p app
@@ -31,7 +28,6 @@ jobs:
 
     - name: Build with Gradle
       run: gradle assembleDebug --stacktrace
-      continue-on-error: true
 
     - name: Upload APK Artifact
       uses: actions/upload-artifact@v4
