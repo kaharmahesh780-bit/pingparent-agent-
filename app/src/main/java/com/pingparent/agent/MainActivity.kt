@@ -1,7 +1,11 @@
 package com.pingparent.agent
 
 import android.app.Activity
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.graphics.Color
+import android.os.BatteryManager
 import android.os.Bundle
 import android.text.InputType
 import android.view.Gravity
@@ -14,13 +18,20 @@ import com.google.firebase.firestore.FirebaseFirestore
 
 class MainActivity : Activity() {
 
+    private lateinit var db: FirebaseFirestore
+    private lateinit var statusText: TextView
+    private lateinit var codeInput: EditText
+    private lateinit var pairButton: Button
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
         FirebaseApp.initializeApp(this)
-        val db = FirebaseFirestore.getInstance()
+        db = FirebaseFirestore.getInstance()
 
-        // मुख्य लेआउट (वर्टिकल)
+        val prefs = getSharedPreferences("PingParentPrefs", Context.MODE_PRIVATE)
+        val savedCode = prefs.getString("paired_code", null)
+
         val layout = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
@@ -28,7 +39,6 @@ class MainActivity : Activity() {
             setBackgroundColor(Color.parseColor("#F8F9FA"))
         }
 
-        // हेडिंग
         val titleText = TextView(this).apply {
             text = "PingParent Agent"
             textSize = 24f
@@ -37,8 +47,7 @@ class MainActivity : Activity() {
             setPadding(0, 0, 0, 40)
         }
 
-        // पेयरिंग कोड इनपुट बॉक्स
-        val codeInput = EditText(this).apply {
+        codeInput = EditText(this).apply {
             hint = "Enter 6-digit Pairing Code"
             inputType = InputType.TYPE_CLASS_NUMBER
             textSize = 18f
@@ -47,58 +56,19 @@ class MainActivity : Activity() {
             setBackgroundColor(Color.WHITE)
         }
 
-        // स्टेटस टेक्स्ट
-        val statusText = TextView(this).apply {
-            text = "Enter code from parent dashboard to connect."
-            textSize = 16f
-            setTextColor(Color.DKGRAY)
-            gravity = Gravity.CENTER
-            setPadding(0, 30, 0, 30)
-        }
-
-        // पेयरिंग बटन
-        val pairButton = Button(this).apply {
+        pairButton = Button(this).apply {
             text = "Connect Device"
             textSize = 18f
             setBackgroundColor(Color.parseColor("#0D6EFD"))
             setTextColor(Color.WHITE)
         }
 
-        pairButton.setOnClickListener {
-            val code = codeInput.text.toString().trim()
-            if (code.isEmpty()) {
-                statusText.text = "Please enter a valid pairing code."
-                return@setOnClickListener
-            }
-
-            statusText.text = "Verifying pairing code..."
-
-            val docRef = db.collection("devices").document(code)
-
-            docRef.get().addOnSuccessListener { document ->
-                if (document.exists()) {
-                    // कोड मौजूद है, स्टेटस और लास्ट सीन अपडेट करें
-                    val updates = hashMapOf<String, Any>(
-                        "status" to "paired",
-                        "isOnline" to true,
-                        "lastSeen" to System.currentTimeMillis()
-                    )
-
-                    docRef.update(updates)
-                        .addOnSuccessListener {
-                            statusText.text = "✅ Device Linked Successfully!\nParent: ${document.getString("parentPhone") ?: ""}"
-                            codeInput.isEnabled = false
-                            pairButton.isEnabled = false
-                        }
-                        .addOnFailureListener { e ->
-                            statusText.text = "Update Failed: ${e.message}"
-                        }
-                } else {
-                    statusText.text = "❌ Invalid Code: Document '$code' not found."
-                }
-            }.addOnFailureListener { e ->
-                statusText.text = "Connection Error: ${e.message}"
-            }
+        statusText = TextView(this).apply {
+            text = "Enter code to pair device."
+            textSize = 16f
+            setTextColor(Color.DKGRAY)
+            gravity = Gravity.CENTER
+            setPadding(0, 30, 0, 30)
         }
 
         layout.addView(titleText)
@@ -107,5 +77,79 @@ class MainActivity : Activity() {
         layout.addView(statusText)
 
         setContentView(layout)
+
+        // अगर पहले से पेयर है तो सीधे सिंक करें
+        if (!savedCode.isNullOrEmpty()) {
+            codeInput.setText(savedCode)
+            codeInput.isEnabled = false
+            pairButton.isEnabled = false
+            updateDeviceData(savedCode)
+        }
+
+        pairButton.setOnClickListener {
+            val code = codeInput.text.toString().trim()
+            if (code.isEmpty()) {
+                statusText.text = "Please enter pairing code."
+                return@setOnClickListener
+            }
+            statusText.text = "Connecting..."
+            pairAndSync(code)
+        }
+    }
+
+    private fun pairAndSync(code: String) {
+        val docRef = db.collection("devices").document(code)
+        docRef.get().addOnSuccessListener { doc ->
+            if (doc.exists()) {
+                getSharedPreferences("PingParentPrefs", Context.MODE_PRIVATE)
+                    .edit()
+                    .putString("paired_code", code)
+                    .apply()
+
+                codeInput.isEnabled = false
+                pairButton.isEnabled = false
+                updateDeviceData(code)
+            } else {
+                statusText.text = "❌ Code not found."
+            }
+        }.addOnFailureListener { e ->
+            statusText.text = "Error: ${e.message}"
+        }
+    }
+
+    private fun updateDeviceData(code: String) {
+        val (batteryLevel, isCharging) = getBatteryInfo()
+
+        val updates = hashMapOf<String, Any>(
+            "status" to "paired",
+            "isOnline" to true,
+            "lastSeen" to System.currentTimeMillis(),
+            "batteryLevel" to batteryLevel,
+            "isCharging" to isCharging
+        )
+
+        db.collection("devices").document(code)
+            .update(updates)
+            .addOnSuccessListener {
+                statusText.text = "✅ Device Active & Synced!\nBattery: $batteryLevel% (Charging: $isCharging)"
+            }
+            .addOnFailureListener { e ->
+                statusText.text = "Sync Failed: ${e.message}"
+            }
+    }
+
+    private fun getBatteryInfo(): Pair<Int, Boolean> {
+        val filter = IntentFilter(Intent.ACTION_BATTERY_CHANGED)
+        val batteryStatus: Intent? = registerReceiver(null, filter)
+
+        val level = batteryStatus?.getIntExtra(BatteryManager.EXTRA_LEVEL, -1) ?: -1
+        val scale = batteryStatus?.getIntExtra(BatteryManager.EXTRA_SCALE, -1) ?: -1
+        val batteryPct = if (level >= 0 && scale > 0) (level * 100 / scale) else -1
+
+        val status = batteryStatus?.getIntExtra(BatteryManager.EXTRA_STATUS, -1) ?: -1
+        val isCharging = status == BatteryManager.BATTERY_STATUS_CHARGING ||
+                status == BatteryManager.BATTERY_STATUS_FULL
+
+        return Pair(batteryPct, isCharging)
     }
 }
