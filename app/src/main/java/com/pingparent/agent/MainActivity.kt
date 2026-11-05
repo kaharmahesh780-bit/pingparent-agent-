@@ -3,6 +3,7 @@ package com.pingparent.agent
 import android.os.Bundle
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
+import com.google.firebase.FirebaseApp
 import com.google.firebase.firestore.FirebaseFirestore
 
 class MainActivity : AppCompatActivity() {
@@ -17,20 +18,26 @@ class MainActivity : AppCompatActivity() {
         }
         setContentView(textView)
 
-        val db = FirebaseFirestore.getInstance()
-        val deviceStatus = hashMapOf(
-            "status" to "online",
-            "lastSeen" to System.currentTimeMillis()
-        )
+        try {
+            FirebaseApp.initializeApp(this)
+            val db = FirebaseFirestore.getInstance()
 
-        db.collection("devices")
-            .document("agent_test_device")
-            .set(deviceStatus)
-            .addOnSuccessListener {
-                textView.text = "Connected to Firebase!\nPingParent Agent active."
-            }
-            .addOnFailureListener { e ->
-                textView.text = "Connection Error: ${e.message}"
-            }
+            val deviceStatus = hashMapOf(
+                "status" to "online",
+                "lastSeen" to System.currentTimeMillis()
+            )
+
+            db.collection("devices")
+                .document("agent_test_device")
+                .set(deviceStatus)
+                .addOnSuccessListener {
+                    textView.text = "Connected to Firebase!\nPingParent Agent active."
+                }
+                .addOnFailureListener { e ->
+                    textView.text = "Firebase Error: ${e.message}"
+                }
+        } catch (e: Exception) {
+            textView.text = "Startup Error:\n${e.localizedMessage}"
+        }
     }
 }
