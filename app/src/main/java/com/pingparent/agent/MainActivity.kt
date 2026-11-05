@@ -1,6 +1,7 @@
 package com.pingparent.agent
 
 import android.app.Activity
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
@@ -23,6 +24,16 @@ class MainActivity : Activity() {
     private lateinit var statusText: TextView
     private lateinit var codeInput: EditText
     private lateinit var pairButton: Button
+
+    private val batteryReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            val prefs = getSharedPreferences("PingParentPrefs", Context.MODE_PRIVATE)
+            val code = prefs.getString("paired_code", null)
+            if (!code.isNullOrEmpty()) {
+                updateDeviceData(code)
+            }
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -96,6 +107,18 @@ class MainActivity : Activity() {
             statusText.text = "Connecting..."
             pairAndSync(code)
         }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        registerReceiver(batteryReceiver, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+    }
+
+    override fun onPause() {
+        super.onPause()
+        try {
+            unregisterReceiver(batteryReceiver)
+        } catch (_: Exception) {}
     }
 
     private fun pairAndSync(code: String) {
