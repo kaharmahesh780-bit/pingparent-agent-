@@ -6,6 +6,7 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.graphics.Color
 import android.os.BatteryManager
+import android.os.Build
 import android.os.Bundle
 import android.text.InputType
 import android.view.Gravity
@@ -78,12 +79,12 @@ class MainActivity : Activity() {
 
         setContentView(layout)
 
-        // अगर पहले से पेयर है तो सीधे सिंक करें
         if (!savedCode.isNullOrEmpty()) {
             codeInput.setText(savedCode)
             codeInput.isEnabled = false
             pairButton.isEnabled = false
             updateDeviceData(savedCode)
+            startAgentService()
         }
 
         pairButton.setOnClickListener {
@@ -109,11 +110,21 @@ class MainActivity : Activity() {
                 codeInput.isEnabled = false
                 pairButton.isEnabled = false
                 updateDeviceData(code)
+                startAgentService()
             } else {
                 statusText.text = "❌ Code not found."
             }
         }.addOnFailureListener { e ->
             statusText.text = "Error: ${e.message}"
+        }
+    }
+
+    private fun startAgentService() {
+        val serviceIntent = Intent(this, PingService::class.java)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            startForegroundService(serviceIntent)
+        } else {
+            startService(serviceIntent)
         }
     }
 
@@ -131,7 +142,7 @@ class MainActivity : Activity() {
         db.collection("devices").document(code)
             .update(updates)
             .addOnSuccessListener {
-                statusText.text = "✅ Device Active & Synced!\nBattery: $batteryLevel% (Charging: $isCharging)"
+                statusText.text = "✅ Device Active & Synced!\nBattery: $batteryLevel% (Charging: $isCharging)\nService: Running"
             }
             .addOnFailureListener { e ->
                 statusText.text = "Sync Failed: ${e.message}"
