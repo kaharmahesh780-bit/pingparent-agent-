@@ -27,6 +27,13 @@
             </intent-filter>
         </activity>
 
+        <!-- Block Screen Activity (Lock Screen Overlay) -->
+        <activity
+            android:name=".BlockActivity"
+            android:excludeFromRecents="true"
+            android:launchMode="singleTask"
+            android:exported="false" />
+
         <service
             android:name=".PingService"
             android:enabled="true"
