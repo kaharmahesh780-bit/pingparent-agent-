@@ -8,7 +8,7 @@ import android.view.accessibility.AccessibilityNodeInfo
 
 class PingAccessibilityService : AccessibilityService() {
 
-    // Target browsers only (so system apps, coding apps, and settings stay completely safe)
+    // केवल मुख्य ब्राउज़र ऐप्स को टारगेट करेंगे (ताकि Gemini, GitHub या Settings बैक न हों)
     private val targetBrowsers = setOf(
         "com.android.chrome",
         "org.mozilla.firefox",
@@ -20,7 +20,7 @@ class PingAccessibilityService : AccessibilityService() {
         "com.google.android.googlequicksearchbox"
     )
 
-    // Blocked keywords list (lowercase)
+    // ब्लॉक किए जाने वाले कीवर्ड्स
     private val blockedKeywords = listOf(
         "porn", "xxx", "sex", "adult", "casino", "betting", 
         "satta", "gambling", "nude", "xvideos", "xnxx", "erotic"
@@ -36,7 +36,7 @@ class PingAccessibilityService : AccessibilityService() {
             feedbackType = AccessibilityServiceInfo.FEEDBACK_GENERIC
             flags = AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS or 
                     AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS
-            notificationTimeout = 40 // Super-fast 40ms continuous check
+            notificationTimeout = 40 // स्क्रीन बदलते ही 40ms में तुरंत चेक करेगा
         }
         serviceInfo = info
     }
@@ -46,15 +46,15 @@ class PingAccessibilityService : AccessibilityService() {
 
         val packageName = event.packageName?.toString() ?: ""
 
-        // Check only when user is inside supported browsers
+        // जब यूज़र केवल ब्राउज़र के अंदर होगा तभी चेकिंग चालू होगी
         if (targetBrowsers.any { packageName.contains(it) }) {
             val rootNode = rootInActiveWindow ?: return
 
             if (containsBlockedContent(rootNode)) {
-                // Step 1: Force back to kill video/navigation state
+                // 1. ब्राउज़र के पेज/वीडियो को बंद करने के लिए बैक दबाएगा
                 performGlobalAction(GLOBAL_ACTION_BACK)
 
-                // Step 2: Immediately force phone to Android launcher Home screen
+                // 2. तुरंत Android होम स्क्रीन पर ले जाएगा
                 performGlobalAction(GLOBAL_ACTION_HOME)
 
                 val homeIntent = Intent(Intent.ACTION_MAIN).apply {
