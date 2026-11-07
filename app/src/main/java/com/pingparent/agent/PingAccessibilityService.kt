@@ -8,7 +8,7 @@ import android.view.accessibility.AccessibilityNodeInfo
 
 class PingAccessibilityService : AccessibilityService() {
 
-    // केवल मुख्य ब्राउज़र ऐप्स को टारगेट करेंगे (ताकि Gemini, GitHub या Settings बैक न हों)
+    // Target browsers
     private val targetBrowsers = setOf(
         "com.android.chrome",
         "org.mozilla.firefox",
@@ -20,7 +20,7 @@ class PingAccessibilityService : AccessibilityService() {
         "com.google.android.googlequicksearchbox"
     )
 
-    // ब्लॉक किए जाने वाले कीवर्ड्स
+    // Blocked keywords
     private val blockedKeywords = listOf(
         "porn", "xxx", "sex", "adult", "casino", "betting", 
         "satta", "gambling", "nude", "xvideos", "xnxx", "erotic"
@@ -36,7 +36,7 @@ class PingAccessibilityService : AccessibilityService() {
             feedbackType = AccessibilityServiceInfo.FEEDBACK_GENERIC
             flags = AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS or 
                     AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS
-            notificationTimeout = 40 // स्क्रीन बदलते ही 40ms में तुरंत चेक करेगा
+            notificationTimeout = 40
         }
         serviceInfo = info
     }
@@ -46,24 +46,31 @@ class PingAccessibilityService : AccessibilityService() {
 
         val packageName = event.packageName?.toString() ?: ""
 
-        // जब यूज़र केवल ब्राउज़र के अंदर होगा तभी चेकिंग चालू होगी
+        // 1. INSTAGRAM BLOCK: Jaise hi Instagram open hoga, seedhe BlockActivity aayegi
+        if (packageName == "com.instagram.android") {
+            if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
+                launchBlockScreen("Instagram")
+            }
+            return
+        }
+
+        // 2. BROWSERS BLOCK: Chrome ya anya browsers me 18+ content check
         if (targetBrowsers.any { packageName.contains(it) }) {
             val rootNode = rootInActiveWindow ?: return
 
             if (containsBlockedContent(rootNode)) {
-                // 1. ब्राउज़र के पेज/वीडियो को बंद करने के लिए बैक दबाएगा
-                performGlobalAction(GLOBAL_ACTION_BACK)
-
-                // 2. तुरंत Android होम स्क्रीन पर ले जाएगा
-                performGlobalAction(GLOBAL_ACTION_HOME)
-
-                val homeIntent = Intent(Intent.ACTION_MAIN).apply {
-                    addCategory(Intent.CATEGORY_HOME)
-                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
-                }
-                startActivity(homeIntent)
+                launchBlockScreen("Restricted Site")
             }
         }
+    }
+
+    // Professional clean block overlay launch karne ka method
+    private fun launchBlockScreen(appName: String) {
+        val intent = Intent(this, BlockActivity::class.java).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+            putExtra("BLOCKED_APP_NAME", appName)
+        }
+        startActivity(intent)
     }
 
     private fun containsBlockedContent(node: AccessibilityNodeInfo?): Boolean {
