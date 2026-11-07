@@ -5,6 +5,7 @@ import android.os.Bundle
 import android.view.WindowManager
 import android.widget.Button
 import androidx.appcompat.app.AppCompatActivity
+import com.pingparent.agent.R
 
 class BlockActivity : AppCompatActivity() {
 
@@ -24,7 +25,7 @@ class BlockActivity : AppCompatActivity() {
         }
     }
 
-    // Back press karne par bhi app nahi khulega, seedhe home screen jayega
+    // Back press par bhi home screen
     override fun onBackPressed() {
         goToHome()
     }
