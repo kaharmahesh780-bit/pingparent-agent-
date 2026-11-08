@@ -10,7 +10,7 @@ class PingAccessibilityService : AccessibilityService() {
 
     private var lastBlockedTime: Long = 0L
 
-    // Market leader browser targets & system search engines
+    // प्रमुख ब्राउज़र्स
     private val targetBrowsers = setOf(
         "com.android.chrome",
         "org.mozilla.firefox",
@@ -22,7 +22,7 @@ class PingAccessibilityService : AccessibilityService() {
         "com.google.android.googlequicksearchbox"
     )
 
-    // Known browser address/URL bar IDs used by top parental apps
+    // ब्राउज़र के एड्रेस/सर्च बार की इंटरनल IDs
     private val browserUrlNodeIds = setOf(
         "com.android.chrome:id/url_bar",
         "com.android.chrome:id/search_box_text",
@@ -33,11 +33,16 @@ class PingAccessibilityService : AccessibilityService() {
         "com.google.android.googlequicksearchbox:id/googleapp_search_box"
     )
 
-    // Comprehensive content filter list (keywords & adult domains)
+    // ब्लॉक किए जाने वाले कीवर्ड्स और डोमेन
     private val blockedKeywords = setOf(
         "porn", "xxx", "sex", "adult", "casino", "betting", 
         "satta", "gambling", "nude", "xvideos", "xnxx", "erotic",
         "redtube", "youporn", "brazzers", "hentai", "stripchat"
+    )
+
+    // Incognito / Private टैब के सिग्नल्स
+    private val incognitoKeywords = setOf(
+        "incognito", "private tab", "private browsing", "inprivate", "गुप्त"
     )
 
     override fun onServiceConnected() {
@@ -50,7 +55,7 @@ class PingAccessibilityService : AccessibilityService() {
             feedbackType = AccessibilityServiceInfo.FEEDBACK_GENERIC
             flags = AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS or
                     AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS
-            notificationTimeout = 10 // Ultra-fast response
+            notificationTimeout = 10 // सुपर फ़ास्ट रिस्पॉन्स
         }
         serviceInfo = info
     }
@@ -60,15 +65,23 @@ class PingAccessibilityService : AccessibilityService() {
 
         val packageName = event.packageName?.toString() ?: ""
 
-        // 1. Direct App Shield (Instagram)
+        // 1. Instagram डायरेक्ट ब्लॉक
         if (packageName == "com.instagram.android") {
             triggerBlockOverlay("Instagram")
             return
         }
 
-        // 2. Browser Content & URL Inspection
+        // 2. ब्राउज़र और सर्च इंस्पेक्शन
         if (targetBrowsers.any { packageName.contains(it) }) {
-            // Priority Check 1: Typed Search Event Text
+            val rootNode = rootInActiveWindow ?: return
+
+            // A. Incognito Mode ब्लॉक (Qustodio/Bark का नियम)
+            if (isIncognitoModeActive(rootNode, event)) {
+                triggerBlockOverlay("Incognito Browsing Blocked")
+                return
+            }
+
+            // B. सर्च बार में टाइप किया जा रहा टेक्स्ट तुरंत चेक करना
             for (charSeq in event.text) {
                 if (containsRestrictedPattern(charSeq.toString())) {
                     triggerBlockOverlay("Restricted Web Search")
@@ -76,8 +89,7 @@ class PingAccessibilityService : AccessibilityService() {
                 }
             }
 
-            // Priority Check 2: Address Bar View IDs
-            val rootNode = rootInActiveWindow ?: return
+            // C. Chrome URL/एड्रेस बार चेक करना
             for (viewId in browserUrlNodeIds) {
                 val nodes = rootNode.findAccessibilityNodeInfosByViewId(viewId)
                 for (node in nodes) {
@@ -89,14 +101,47 @@ class PingAccessibilityService : AccessibilityService() {
                 }
             }
 
-            // Priority Check 3: Full DOM/Screen Node Hierarchy Scan
+            // D. स्क्रीन पर दिख रहे कंटेंट की चेकिंग
             if (deepInspectHierarchy(rootNode)) {
                 triggerBlockOverlay("Restricted Content")
             }
         }
     }
 
-    // Normalizes spaces and special characters to prevent evasion (e.g., 'p o r n' or 'p-o-r-n')
+    private fun isIncognitoModeActive(rootNode: AccessibilityNodeInfo, event: AccessibilityEvent): Boolean {
+        val eventTexts = event.text.joinToString(" ").lowercase()
+        val contentDesc = event.contentDescription?.toString()?.lowercase() ?: ""
+
+        for (incognito in incognitoKeywords) {
+            if (eventTexts.contains(incognito) || contentDesc.contains(incognito)) {
+                return true
+            }
+        }
+
+        return searchIncognitoNodes(rootNode)
+    }
+
+    private fun searchIncognitoNodes(node: AccessibilityNodeInfo?): Boolean {
+        if (node == null) return false
+
+        val text = node.text?.toString()?.lowercase() ?: ""
+        val desc = node.contentDescription?.toString()?.lowercase() ?: ""
+
+        for (incognito in incognitoKeywords) {
+            if (text.contains(incognito) || desc.contains(incognito)) {
+                return true
+            }
+        }
+
+        for (i in 0 until node.childCount) {
+            if (searchIncognitoNodes(node.getChild(i))) {
+                return true
+            }
+        }
+        return false
+    }
+
+    // स्पेस या डॉट्स (जैसे p o r n या p.o.r.n) को साफ़ करके पकड़ने का फ़िल्टर
     private fun containsRestrictedPattern(rawText: String): Boolean {
         if (rawText.isBlank()) return false
         val clean = rawText.lowercase()
@@ -131,7 +176,6 @@ class PingAccessibilityService : AccessibilityService() {
 
     private fun triggerBlockOverlay(reason: String) {
         val currentTime = System.currentTimeMillis()
-        // Prevents duplicate intent flooding (1.5-second debounce)
         if (currentTime - lastBlockedTime < 1500) return
         lastBlockedTime = currentTime
 
