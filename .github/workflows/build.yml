@@ -10,33 +10,25 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - name: Checkout Repository
-      uses: actions/checkout@v4
+      - name: Checkout Repository
+        uses: actions/checkout@v4
 
-    - name: Set up JDK 17
-      uses: actions/setup-java@v4
-      with:
-        java-version: '17'
-        distribution: 'temurin'
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
 
-    - name: Setup Gradle 8.2
-      uses: gradle/actions/setup-gradle@v3
-      with:
-        gradle-version: '8.2'
+      - name: Make Gradlew Executable
+        run: chmod +x gradlew
 
-    - name: Move Config File
-      run: |
-        mkdir -p app
-        if [ -f google-services.json ]; then
-          cp google-services.json app/
-        fi
+      - name: Build with Gradle Wrapper
+        run: ./gradlew assembleDebug --no-daemon --stacktrace
 
-    - name: Build with Gradle
-      run: gradle assembleDebug --no-daemon
-
-    - name: Upload APK Artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: pingparent-agent-apk
-        path: app/build/outputs/apk/debug/*.apk
+      - name: Upload APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-debug
+          path: app/build/outputs/apk/debug/app-debug.apk
+          
         
