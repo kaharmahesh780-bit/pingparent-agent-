@@ -73,7 +73,7 @@ class PingAccessibilityService : AccessibilityService() {
 
             // 2. Browser Tracking
             if (targetBrowsers.any { packageName.contains(it) }) {
-                // Check event text directly (ultra fast, no memory leak)
+                // Check event text directly
                 for (charSeq in event.text) {
                     val txt = charSeq?.toString() ?: ""
                     if (isIncognitoText(txt)) {
@@ -108,7 +108,6 @@ class PingAccessibilityService : AccessibilityService() {
                         }
                     }
                 } finally {
-                    // Critical: avoid window node memory choke
                     try {
                         rootNode.recycle()
                     } catch (ignored: Exception) {}
