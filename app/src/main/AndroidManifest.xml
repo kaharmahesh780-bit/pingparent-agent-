@@ -7,6 +7,7 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <uses-permission
         android:name="android.permission.PACKAGE_USAGE_STATS"
         tools:ignore="ProtectedPermissions" />
@@ -27,12 +28,13 @@
             </intent-filter>
         </activity>
 
-        <!-- Block Screen Activity (Lock Screen Overlay) -->
+        <!-- Block Screen Activity (Crash-Free Background Overlay) -->
         <activity
             android:name=".BlockActivity"
+            android:exported="true"
             android:excludeFromRecents="true"
-            android:launchMode="singleTask"
-            android:exported="false" />
+            android:launchMode="singleTop"
+            android:theme="@android:style/Theme.NoTitleBar.Fullscreen" />
 
         <service
             android:name=".PingService"
