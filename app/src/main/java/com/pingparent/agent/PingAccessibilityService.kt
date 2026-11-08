@@ -3,8 +3,10 @@ package com.pingparent.agent
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.AccessibilityServiceInfo
 import android.content.Intent
+import android.os.Handler
+import android.os.Looper
 import android.view.accessibility.AccessibilityEvent
-import android.view.accessibility.AccessibilityNodeInfo
+import android.widget.Toast
 
 class PingAccessibilityService : AccessibilityService() {
 
@@ -14,32 +16,16 @@ class PingAccessibilityService : AccessibilityService() {
         "com.android.chrome",
         "org.mozilla.firefox",
         "com.opera.browser",
-        "com.opera.mini.native",
         "com.brave.browser",
-        "com.microsoft.emmx",
-        "com.sec.android.app.sbrowser",
-        "com.google.android.googlequicksearchbox"
+        "com.sec.android.app.sbrowser"
     )
 
-    private val browserUrlNodeIds = listOf(
-        "com.android.chrome:id/url_bar",
-        "com.android.chrome:id/search_box_text",
-        "org.mozilla.firefox:id/url_bar_title",
-        "com.sec.android.app.sbrowser:id/location_bar_edit_text",
-        "com.opera.browser:id/url_field",
-        "com.brave.browser:id/url_bar",
-        "com.google.android.googlequicksearchbox:id/googleapp_search_box"
-    )
-
-    private val blockedKeywords = setOf(
+    private val blockedKeywords = listOf(
         "porn", "xxx", "sex", "adult", "casino", "betting", 
-        "satta", "gambling", "nude", "xvideos", "xnxx", "erotic",
-        "redtube", "youporn", "brazzers", "hentai", "stripchat"
+        "satta", "gambling", "nude", "xvideos", "xnxx", "erotic"
     )
 
-    private val incognitoKeywords = setOf(
-        "incognito", "private tab", "private browsing", "inprivate", "गुप्त"
-    )
+    private val incognitoMarkers = listOf("incognito", "private tab", "inprivate", "गुप्त")
 
     override fun onServiceConnected() {
         super.onServiceConnected()
@@ -48,8 +34,7 @@ class PingAccessibilityService : AccessibilityService() {
                 eventTypes = AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED or
                              AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED
                 feedbackType = AccessibilityServiceInfo.FEEDBACK_GENERIC
-                flags = AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS or
-                        AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS
+                flags = AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS
                 notificationTimeout = 100
             }
             serviceInfo = info
@@ -60,78 +45,65 @@ class PingAccessibilityService : AccessibilityService() {
         if (event == null) return
 
         try {
-            val packageName = event.packageName?.toString() ?: ""
+            val pkg = event.packageName?.toString() ?: ""
 
-            // 1. Direct App Shield (Instagram)
-            if (packageName == "com.instagram.android") {
-                triggerBlockOverlay("Instagram")
+            // 1. INSTAGRAM SHIELD
+            if (pkg == "com.instagram.android") {
+                executeImmediateBlock("Instagram is blocked by PingParent")
                 return
             }
 
-            // 2. Browser Tracking
-            if (targetBrowsers.any { packageName.contains(it) }) {
-                // Check event text safely
-                event.text?.forEach { charSeq ->
-                    val txt = charSeq?.toString() ?: ""
-                    if (isIncognitoText(txt)) {
-                        triggerBlockOverlay("Incognito Browsing Blocked")
-                        return
-                    }
-                    if (containsRestrictedPattern(txt)) {
-                        triggerBlockOverlay("Restricted Web Search")
-                        return
-                    }
+            // 2. BROWSER & SEARCH FILTER
+            if (targetBrowsers.any { pkg.contains(it) }) {
+                // A. Check event text safely
+                val combinedText = event.text?.joinToString(" ")?.lowercase() ?: ""
+                
+                // Incognito check
+                if (incognitoMarkers.any { combinedText.contains(it) }) {
+                    executeImmediateBlock("Incognito browsing is not allowed")
+                    return
                 }
 
-                // Check URL/Address bars specifically
-                val rootNode = try { rootInActiveWindow } catch (_: Throwable) { null } ?: return
-                for (viewId in browserUrlNodeIds) {
-                    val nodes = try { rootNode.findAccessibilityNodeInfosByViewId(viewId) } catch (_: Throwable) { null }
-                    if (!nodes.isNullOrEmpty()) {
-                        for (node in nodes) {
-                            val urlText = node.text?.toString() ?: ""
-                            val descText = node.contentDescription?.toString() ?: ""
+                // Keyword check
+                if (isRestricted(combinedText)) {
+                    executeImmediateBlock("Adult content is restricted")
+                    return
+                }
 
-                            if (isIncognitoText(urlText) || isIncognitoText(descText)) {
-                                triggerBlockOverlay("Incognito Browsing Blocked")
-                                return
-                            }
-                            if (containsRestrictedPattern(urlText) || containsRestrictedPattern(descText)) {
-                                triggerBlockOverlay("Restricted URL")
-                                return
-                            }
-                        }
+                // B. Fast Node Search (No recursive DOM traversal)
+                val rootNode = try { rootInActiveWindow } catch (_: Throwable) { null } ?: return
+                for (kw in blockedKeywords) {
+                    val matching = try { rootNode.findAccessibilityNodeInfosByText(kw) } catch (_: Throwable) { null }
+                    if (!matching.isNullOrEmpty()) {
+                        executeImmediateBlock("Restricted site blocked")
+                        return
                     }
                 }
             }
         } catch (_: Throwable) {}
     }
 
-    private fun isIncognitoText(text: String): Boolean {
-        if (text.isBlank()) return false
-        val clean = text.lowercase()
-        return incognitoKeywords.any { clean.contains(it) }
-    }
-
-    private fun containsRestrictedPattern(rawText: String): Boolean {
+    private fun isRestricted(rawText: String): Boolean {
         if (rawText.isBlank()) return false
-        val clean = rawText.lowercase()
-        val unified = clean.replace(Regex("[^a-zA-Z0-9]"), "")
-
-        for (keyword in blockedKeywords) {
-            if (clean.contains(keyword) || unified.contains(keyword)) {
-                return true
-            }
-        }
-        return false
+        val clean = rawText.lowercase().replace(Regex("[^a-z0-9]"), "")
+        return blockedKeywords.any { clean.contains(it) || rawText.lowercase().contains(it) }
     }
 
-    private fun triggerBlockOverlay(reason: String) {
-        val currentTime = System.currentTimeMillis()
-        if (currentTime - lastBlockedTime < 2000) return
-        lastBlockedTime = currentTime
+    private fun executeImmediateBlock(reason: String) {
+        val now = System.currentTimeMillis()
+        if (now - lastBlockedTime < 2500) return
+        lastBlockedTime = now
 
         try {
+            // First: Send user directly to home screen (Instant eject, zero flicker)
+            performGlobalAction(GLOBAL_ACTION_HOME)
+
+            // Second: Show prompt on main thread
+            Handler(Looper.getMainLooper()).post {
+                Toast.makeText(applicationContext, "PingParent: $reason", Toast.LENGTH_LONG).show()
+            }
+
+            // Third: Launch Block Screen
             val intent = Intent(this, BlockActivity::class.java).apply {
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
                 putExtra("BLOCKED_APP_NAME", reason)
