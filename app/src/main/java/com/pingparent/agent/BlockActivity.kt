@@ -1,102 +1,71 @@
 package com.pingparent.agent
 
-import android.content.Intent
+import android.app.Activity
 import android.graphics.Color
-import android.graphics.Typeface
 import android.os.Bundle
 import android.view.Gravity
-import android.view.WindowManager
 import android.widget.Button
-import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
-import androidx.appcompat.app.AppCompatActivity
 
-class BlockActivity : AppCompatActivity() {
+class BlockActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // Full screen setup
-        window.setFlags(
-            WindowManager.LayoutParams.FLAG_FULLSCREEN,
-            WindowManager.LayoutParams.FLAG_FULLSCREEN
-        )
+        val appName = intent.getStringExtra("BLOCKED_APP_NAME") ?: "Restricted App"
 
-        // Pure programmatic layout (no R.layout dependency)
-        val rootLayout = LinearLayout(this).apply {
+        val layout = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
-            setBackgroundColor(Color.parseColor("#1E1E2C"))
-            setPadding(48, 48, 48, 48)
+            setBackgroundColor(Color.parseColor("#111827"))
+            setPadding(60, 60, 60, 60)
         }
 
-        val icon = ImageView(this).apply {
-            setImageResource(android.R.drawable.ic_lock_lock)
-            setColorFilter(Color.parseColor("#FF5252"))
-            layoutParams = LinearLayout.LayoutParams(200, 200).apply {
-                bottomMargin = 40
-            }
+        val iconText = TextView(this).apply {
+            text = "🛡️"
+            textSize = 64f
+            gravity = Gravity.CENTER
+            setPadding(0, 0, 0, 30)
         }
 
-        val title = TextView(this).apply {
-            text = "App Blocked"
-            textSize = 24f
+        val titleText = TextView(this).apply {
+            text = "Access Restricted"
+            textSize = 26f
             setTextColor(Color.WHITE)
-            typeface = Typeface.DEFAULT_BOLD
             gravity = Gravity.CENTER
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply {
-                bottomMargin = 20
-            }
+            setPadding(0, 0, 0, 15)
         }
 
-        val message = TextView(this).apply {
-            text = "This application is restricted by parental controls."
-            textSize = 15f
-            setTextColor(Color.parseColor("#A0A0B0"))
+        val messageText = TextView(this).apply {
+            text = "$appName is restricted by your parent."
+            textSize = 16f
+            setTextColor(Color.parseColor("#9CA3AF"))
             gravity = Gravity.CENTER
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply {
-                bottomMargin = 60
-            }
+            setPadding(0, 0, 0, 40)
         }
 
-        val btnGoHome = Button(this).apply {
+        val homeButton = Button(this).apply {
             text = "Go to Home"
+            textSize = 16f
+            setBackgroundColor(Color.parseColor("#2563EB"))
             setTextColor(Color.WHITE)
-            setBackgroundColor(Color.parseColor("#FF5252"))
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            )
+            setPadding(40, 20, 40, 20)
             setOnClickListener {
-                goToHome()
+                finishAffinity()
             }
         }
 
-        rootLayout.addView(icon)
-        rootLayout.addView(title)
-        rootLayout.addView(message)
-        rootLayout.addView(btnGoHome)
+        layout.addView(iconText)
+        layout.addView(titleText)
+        layout.addView(messageText)
+        layout.addView(homeButton)
 
-        setContentView(rootLayout)
+        setContentView(layout)
     }
 
+    @Deprecated("Deprecated in Java")
     override fun onBackPressed() {
-        goToHome()
-    }
-
-    private fun goToHome() {
-        val intent = Intent(Intent.ACTION_MAIN).apply {
-            addCategory(Intent.CATEGORY_HOME)
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK
-        }
-        startActivity(intent)
-        finish()
+        // बैक बटन से लॉक स्क्रीन बंद नहीं होगी
     }
 }
