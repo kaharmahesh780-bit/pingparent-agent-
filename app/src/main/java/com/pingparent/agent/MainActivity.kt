@@ -1,5 +1,6 @@
 package com.pingparent.agent
 
+import android.annotation.SuppressLint
 import android.app.Activity
 import android.app.AppOpsManager
 import android.app.usage.UsageStatsManager
@@ -8,9 +9,11 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.graphics.Color
+import android.net.Uri
 import android.os.BatteryManager
 import android.os.Build
 import android.os.Bundle
+import android.os.PowerManager
 import android.os.Process
 import android.provider.Settings
 import android.text.InputType
@@ -30,6 +33,7 @@ class MainActivity : Activity() {
     private lateinit var codeInput: EditText
     private lateinit var pairButton: Button
     private lateinit var usagePermissionButton: Button
+    private lateinit var batteryOptimizeButton: Button
 
     private val batteryReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -53,7 +57,7 @@ class MainActivity : Activity() {
         val layout = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
-            setPadding(60, 60, 60, 60)
+            setPadding(50, 50, 50, 50)
             setBackgroundColor(Color.parseColor("#F8F9FA"))
         }
 
@@ -62,7 +66,7 @@ class MainActivity : Activity() {
             textSize = 24f
             setTextColor(Color.parseColor("#212529"))
             gravity = Gravity.CENTER
-            setPadding(0, 0, 0, 40)
+            setPadding(0, 0, 0, 30)
         }
 
         codeInput = EditText(this).apply {
@@ -70,7 +74,7 @@ class MainActivity : Activity() {
             inputType = InputType.TYPE_CLASS_NUMBER
             textSize = 18f
             gravity = Gravity.CENTER
-            setPadding(40, 30, 40, 30)
+            setPadding(40, 25, 40, 25)
             setBackgroundColor(Color.WHITE)
         }
 
@@ -83,7 +87,7 @@ class MainActivity : Activity() {
 
         usagePermissionButton = Button(this).apply {
             text = "Grant Usage Access"
-            textSize = 16f
+            textSize = 15f
             setBackgroundColor(Color.parseColor("#6C757D"))
             setTextColor(Color.WHITE)
             setOnClickListener {
@@ -91,21 +95,35 @@ class MainActivity : Activity() {
             }
         }
 
+        batteryOptimizeButton = Button(this).apply {
+            text = "Disable Battery Limits (Required)"
+            textSize = 15f
+            setBackgroundColor(Color.parseColor("#DC3545"))
+            setTextColor(Color.WHITE)
+            setOnClickListener {
+                requestBatteryOptimizationExemption()
+            }
+        }
+
         statusText = TextView(this).apply {
             text = "Enter code to pair device."
-            textSize = 16f
+            textSize = 15f
             setTextColor(Color.DKGRAY)
             gravity = Gravity.CENTER
-            setPadding(0, 30, 0, 30)
+            setPadding(0, 20, 0, 20)
         }
 
         layout.addView(titleText)
         layout.addView(codeInput)
         layout.addView(pairButton)
         layout.addView(usagePermissionButton)
+        layout.addView(batteryOptimizeButton)
         layout.addView(statusText)
 
         setContentView(layout)
+
+        // Check and prompt 1-click battery bypass immediately
+        requestBatteryOptimizationExemption()
 
         if (!savedCode.isNullOrEmpty()) {
             codeInput.setText(savedCode)
@@ -130,6 +148,7 @@ class MainActivity : Activity() {
         super.onResume()
         registerReceiver(batteryReceiver, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
         checkUsagePermission()
+        checkBatteryOptimizationStatus()
         val prefs = getSharedPreferences("PingParentPrefs", Context.MODE_PRIVATE)
         val code = prefs.getString("paired_code", null)
         if (!code.isNullOrEmpty()) {
@@ -142,6 +161,45 @@ class MainActivity : Activity() {
         try {
             unregisterReceiver(batteryReceiver)
         } catch (_: Exception) {}
+    }
+
+    private fun checkBatteryOptimizationStatus() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            val powerManager = getSystemService(Context.POWER_SERVICE) as? PowerManager
+            val isIgnoring = powerManager?.isIgnoringBatteryOptimizations(packageName) ?: false
+            if (isIgnoring) {
+                batteryOptimizeButton.isEnabled = false
+                batteryOptimizeButton.text = "Battery Unrestricted (Active)"
+                batteryOptimizeButton.setBackgroundColor(Color.parseColor("#198754"))
+            } else {
+                batteryOptimizeButton.isEnabled = true
+                batteryOptimizeButton.text = "Disable Battery Limits (Required)"
+                batteryOptimizeButton.setBackgroundColor(Color.parseColor("#DC3545"))
+            }
+        } else {
+            batteryOptimizeButton.isEnabled = false
+            batteryOptimizeButton.text = "Battery Unrestricted (Active)"
+            batteryOptimizeButton.setBackgroundColor(Color.parseColor("#198754"))
+        }
+    }
+
+    @SuppressLint("BatteryLife")
+    private fun requestBatteryOptimizationExemption() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            val powerManager = getSystemService(Context.POWER_SERVICE) as? PowerManager
+            if (powerManager != null && !powerManager.isIgnoringBatteryOptimizations(packageName)) {
+                try {
+                    val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+                        data = Uri.parse("package:$packageName")
+                    }
+                    startActivity(intent)
+                } catch (_: Exception) {
+                    try {
+                        startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
+                    } catch (_: Exception) {}
+                }
+            }
+        }
     }
 
     private fun checkUsagePermission() {
