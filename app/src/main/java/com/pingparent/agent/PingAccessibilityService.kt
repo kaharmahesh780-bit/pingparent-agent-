@@ -46,17 +46,14 @@ class PingAccessibilityService : AccessibilityService() {
         try {
             val info = AccessibilityServiceInfo().apply {
                 eventTypes = AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED or
-                             AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED or
                              AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED
                 feedbackType = AccessibilityServiceInfo.FEEDBACK_GENERIC
                 flags = AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS or
                         AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS
-                notificationTimeout = 50
+                notificationTimeout = 100
             }
             serviceInfo = info
-        } catch (e: Exception) {
-            e.printStackTrace()
-        }
+        } catch (_: Throwable) {}
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
@@ -73,8 +70,8 @@ class PingAccessibilityService : AccessibilityService() {
 
             // 2. Browser Tracking
             if (targetBrowsers.any { packageName.contains(it) }) {
-                // Check event text directly
-                for (charSeq in event.text) {
+                // Check event text safely
+                event.text?.forEach { charSeq ->
                     val txt = charSeq?.toString() ?: ""
                     if (isIncognitoText(txt)) {
                         triggerBlockOverlay("Incognito Browsing Blocked")
@@ -87,35 +84,27 @@ class PingAccessibilityService : AccessibilityService() {
                 }
 
                 // Check URL/Address bars specifically
-                val rootNode = rootInActiveWindow ?: return
-                try {
-                    for (viewId in browserUrlNodeIds) {
-                        val nodes = rootNode.findAccessibilityNodeInfosByViewId(viewId)
-                        if (!nodes.isNullOrEmpty()) {
-                            for (node in nodes) {
-                                val urlText = node.text?.toString() ?: ""
-                                val descText = node.contentDescription?.toString() ?: ""
+                val rootNode = try { rootInActiveWindow } catch (_: Throwable) { null } ?: return
+                for (viewId in browserUrlNodeIds) {
+                    val nodes = try { rootNode.findAccessibilityNodeInfosByViewId(viewId) } catch (_: Throwable) { null }
+                    if (!nodes.isNullOrEmpty()) {
+                        for (node in nodes) {
+                            val urlText = node.text?.toString() ?: ""
+                            val descText = node.contentDescription?.toString() ?: ""
 
-                                if (isIncognitoText(urlText) || isIncognitoText(descText)) {
-                                    triggerBlockOverlay("Incognito Browsing Blocked")
-                                    return
-                                }
-                                if (containsRestrictedPattern(urlText) || containsRestrictedPattern(descText)) {
-                                    triggerBlockOverlay("Restricted URL")
-                                    return
-                                }
+                            if (isIncognitoText(urlText) || isIncognitoText(descText)) {
+                                triggerBlockOverlay("Incognito Browsing Blocked")
+                                return
+                            }
+                            if (containsRestrictedPattern(urlText) || containsRestrictedPattern(descText)) {
+                                triggerBlockOverlay("Restricted URL")
+                                return
                             }
                         }
                     }
-                } finally {
-                    try {
-                        rootNode.recycle()
-                    } catch (ignored: Exception) {}
                 }
             }
-        } catch (e: Exception) {
-            e.printStackTrace()
-        }
+        } catch (_: Throwable) {}
     }
 
     private fun isIncognitoText(text: String): Boolean {
@@ -148,9 +137,7 @@ class PingAccessibilityService : AccessibilityService() {
                 putExtra("BLOCKED_APP_NAME", reason)
             }
             startActivity(intent)
-        } catch (e: Exception) {
-            e.printStackTrace()
-        }
+        } catch (_: Throwable) {}
     }
 
     override fun onInterrupt() {}
