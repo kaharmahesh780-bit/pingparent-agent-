@@ -19,11 +19,14 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Make Gradlew Executable
-        run: chmod +x gradlew
+      - name: Move Config File
+        run: |
+          if [ -f google-services.json ]; then
+            cp google-services.json app/
+          fi
 
-      - name: Build with Gradle Wrapper
-        run: ./gradlew assembleDebug --no-daemon --stacktrace
+      - name: Build with Gradle
+        run: gradle assembleDebug --no-daemon --stacktrace
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
@@ -31,4 +34,3 @@ jobs:
           name: app-debug
           path: app/build/outputs/apk/debug/app-debug.apk
           
-        
