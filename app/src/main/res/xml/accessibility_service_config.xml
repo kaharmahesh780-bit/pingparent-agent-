@@ -5,4 +5,4 @@
     android:notificationTimeout="300"
     android:canRetrieveWindowContent="false"
     android:accessibilityFlags="flagDefault"
-    android:description="@string/app_name" />
+    android:description="PingParent Protection Shield" />
