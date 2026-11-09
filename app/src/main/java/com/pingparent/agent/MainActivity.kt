@@ -2,8 +2,11 @@ package com.pingparent.agent
 
 import android.app.Activity
 import android.app.AlertDialog
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
+import android.os.BatteryManager
 import android.os.Bundle
 import android.provider.Settings
 import android.view.View
@@ -35,7 +38,6 @@ class MainActivity : Activity() {
                 .putString("parent_pin", "1234")
                 .apply()
 
-            // Initialize on Firestore
             val initialData = hashMapOf(
                 "pairingCode" to pairingCode,
                 "pin" to "1234",
@@ -43,6 +45,9 @@ class MainActivity : Activity() {
             )
             db.collection("devices").document(pairingCode).set(initialData)
         }
+
+        // 2. Sync Real-Time Battery to Firestore
+        syncBatteryStatus(pairingCode)
 
         val pinContainer = findViewById<LinearLayout>(R.id.pinContainer)
         val mainContentContainer = findViewById<LinearLayout>(R.id.mainContentContainer)
@@ -58,7 +63,7 @@ class MainActivity : Activity() {
         tvDisplayPairingCode.text = "Pairing Code: $pairingCode"
         tvAgentCode.text = "Pairing Code: $pairingCode"
 
-        // 2. Unlock Button Logic
+        // 3. Unlock Logic
         btnUnlock.setOnClickListener {
             val enteredPin = etPin.text.toString().trim()
             val currentPin = prefs.getString("parent_pin", "1234") ?: "1234"
@@ -73,7 +78,7 @@ class MainActivity : Activity() {
             }
         }
 
-        // 3. Option 2: Forgot PIN recovery using Pairing Code
+        // 4. Forgot PIN Recovery
         tvForgotPin.setOnClickListener {
             val input = EditText(this)
             input.hint = "Enter Pairing Code (e.g. $pairingCode)"
@@ -97,7 +102,7 @@ class MainActivity : Activity() {
                 .show()
         }
 
-        // 4. Option 1: Live listener for Remote PIN changes from Parent Dashboard
+        // 5. Cloud Listener for Remote PIN update
         db.collection("devices").document(pairingCode).addSnapshotListener { snapshot, _ ->
             if (snapshot != null && snapshot.exists()) {
                 val cloudPin = snapshot.getString("pin")
@@ -115,6 +120,27 @@ class MainActivity : Activity() {
             mainContentContainer.visibility = View.GONE
             pinContainer.visibility = View.VISIBLE
         }
+    }
+
+    private fun syncBatteryStatus(pairingCode: String) {
+        val batteryFilter = IntentFilter(Intent.ACTION_BATTERY_CHANGED)
+        val batteryStatus: Intent? = registerReceiver(null, batteryFilter)
+
+        val level: Int = batteryStatus?.getIntExtra(BatteryManager.EXTRA_LEVEL, -1) ?: -1
+        val scale: Int = batteryStatus?.getIntExtra(BatteryManager.EXTRA_SCALE, -1) ?: -1
+        val batteryPct = if (level != -1 && scale != -1) (level * 100 / scale.toFloat()).toInt() else 0
+
+        val status: Int = batteryStatus?.getIntExtra(BatteryManager.EXTRA_STATUS, -1) ?: -1
+        val isCharging: Boolean = status == BatteryManager.BATTERY_STATUS_CHARGING ||
+                status == BatteryManager.BATTERY_STATUS_FULL
+
+        val batteryData = mapOf(
+            "battery" to batteryPct,
+            "isCharging" to isCharging,
+            "lastSeen" to com.google.firebase.firestore.FieldValue.serverTimestamp()
+        )
+
+        db.collection("devices").document(pairingCode).update(batteryData)
     }
 
     override fun onBackPressed() {
