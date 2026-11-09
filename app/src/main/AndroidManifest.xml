@@ -29,12 +29,12 @@
             </intent-filter>
         </activity>
 
-        <!-- Block Screen Activity (Crash-Free Background Overlay) -->
+        <!-- Qustodio-Style Block Screen Overlay Activity -->
         <activity
             android:name=".BlockActivity"
             android:exported="true"
             android:excludeFromRecents="true"
-            android:launchMode="singleTop"
+            android:launchMode="singleTask"
             android:theme="@android:style/Theme.NoTitleBar.Fullscreen" />
 
         <service
@@ -47,7 +47,7 @@
                 android:value="Parental monitoring background sync" />
         </service>
 
-        <!-- Accessibility Service for 18+ Adult Content Shield -->
+        <!-- Accessibility Service for Multi-Category Safety Shield -->
         <service
             android:name=".PingAccessibilityService"
             android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
