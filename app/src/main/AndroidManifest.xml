@@ -37,6 +37,14 @@
             android:launchMode="singleTask"
             android:theme="@android:style/Theme.NoTitleBar.Fullscreen" />
 
+        <!-- Remote Device Instant Pause Lock Screen -->
+        <activity
+            android:name=".PauseActivity"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:launchMode="singleTask"
+            android:theme="@android:style/Theme.NoTitleBar.Fullscreen" />
+
         <service
             android:name=".PingService"
             android:enabled="true"
