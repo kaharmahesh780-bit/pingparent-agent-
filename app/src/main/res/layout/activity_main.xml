@@ -1,0 +1,112 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:gravity="center"
+    android:padding="24dp"
+    android:background="#0F172A">
+
+    <!-- PIN Lock Section (Default Visible) -->
+    <LinearLayout
+        android:id="@+id/pinContainer"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:gravity="center"
+        android:visibility="visible">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Parent Access"
+            android:textColor="#FFFFFF"
+            android:textSize="22sp"
+            android:textStyle="bold"
+            android:layout_marginBottom="8dp" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Enter 4-digit Parent PIN to open settings"
+            android:textColor="#94A3B8"
+            android:textSize="14sp"
+            android:layout_marginBottom="24dp" />
+
+        <EditText
+            android:id="@+id/etPin"
+            android:layout_width="200dp"
+            android:layout_height="50dp"
+            android:inputType="numberPassword"
+            android:maxLength="4"
+            android:gravity="center"
+            android:textSize="24sp"
+            android:letterSpacing="0.4"
+            android:textColor="#FFFFFF"
+            android:background="#1E293B"
+            android:layout_marginBottom="16dp" />
+
+        <Button
+            android:id="@+id/btnUnlock"
+            android:layout_width="200dp"
+            android:layout_height="wrap_content"
+            android:text="Unlock"
+            android:backgroundTint="#10B981"
+            android:textColor="#FFFFFF" />
+
+        <TextView
+            android:id="@+id/tvPinError"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Incorrect PIN!"
+            android:textColor="#EF4444"
+            android:visibility="gone"
+            android:layout_marginTop="12dp" />
+    </LinearLayout>
+
+    <!-- Main Content Section (Hidden until PIN is entered) -->
+    <LinearLayout
+        android:id="@+id/mainContentContainer"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:gravity="center"
+        android:visibility="gone">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="PingParent Agent"
+            android:textColor="#10B981"
+            android:textSize="22sp"
+            android:textStyle="bold"
+            android:layout_marginBottom="16dp" />
+
+        <TextView
+            android:id="@+id/tvStatus"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Service Active &amp; Protected"
+            android:textColor="#FFFFFF"
+            android:textSize="16sp"
+            android:layout_marginBottom="24dp" />
+
+        <Button
+            android:id="@+id/btnPermissions"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Manage Permissions"
+            android:backgroundTint="#3B82F6"
+            android:textColor="#FFFFFF"
+            android:layout_marginBottom="12dp" />
+
+        <Button
+            android:id="@+id/btnLockApp"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Lock App Again"
+            android:backgroundTint="#64748B"
+            android:textColor="#FFFFFF" />
+    </LinearLayout>
+
+</LinearLayout>
