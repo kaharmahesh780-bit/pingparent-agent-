@@ -1,5 +1,6 @@
 package com.pingparent.agent
 
+import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import android.os.Bundle
@@ -9,11 +10,9 @@ import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.TextView
-import androidx.appcompat.app.AppCompatActivity
 
-class MainActivity : AppCompatActivity() {
+class MainActivity : Activity() {
 
-    // Default PIN: 1234
     private val defaultPin = "1234"
 
     override fun onCreate(savedInstanceState: Bundle?) {
