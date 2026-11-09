@@ -1,143 +1,129 @@
 package com.pingparent.agent
 
-import android.accessibilityservice.AccessibilityService
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.Service
 import android.content.Context
 import android.content.Intent
-import android.view.accessibility.AccessibilityEvent
-import android.view.accessibility.AccessibilityNodeInfo
+import android.content.IntentFilter
+import android.os.BatteryManager
+import android.os.Build
+import android.os.Handler
+import android.os.IBinder
+import android.os.Looper
+import androidx.core.app.NotificationCompat
 import com.google.firebase.firestore.FirebaseFirestore
-import com.google.firebase.firestore.FieldValue
-import java.util.regex.Pattern
+import com.google.firebase.firestore.ListenerRegistration
+import com.google.firebase.firestore.SetOptions
 
-class PingAccessibilityService : AccessibilityService() {
-
-    // 1. Browsers + Social Media + Video/Streaming Platforms
-    private val monitoredApps = setOf(
-        // Browsers
-        "com.android.chrome",
-        "com.google.android.googlequicksearchbox",
-        "org.mozilla.firefox",
-        "com.microsoft.emmx",
-        "com.sec.android.app.sbrowser",
-        "com.brave.browser",
-        "com.opera.browser",
-
-        // Social Media & Video Apps
-        "com.google.android.youtube",
-        "com.instagram.android",
-        "com.facebook.katana",
-        "com.facebook.lite",
-        "com.snapchat.android",
-        "com.twitter.android",
-        "com.zhiliaoapp.musically" // TikTok / Short Video apps
-    )
-
-    // 2. Multi-Category Competitor Rule Engine (Adult, Alcohol, Drugs, Gambling, Self-Harm)
-    private val safetyRules = listOf(
-        // Category: Adult / Explicit
-        Pair(Pattern.compile("\\b(porn|xxx|xvideos|xnxx|pornhub|hentai|sex|nude|erotic|brazzers)\\b", Pattern.CASE_INSENSITIVE), "Adult Content"),
-        
-        // Category: Alcohol & Tobacco
-        Pair(Pattern.compile("\\b(beer|whiskey|vodka|rum|alcohol|daroo|wine|cigarette|smoke|vape|hookah)\\b", Pattern.CASE_INSENSITIVE), "Alcohol & Tobacco"),
-
-        // Category: Drugs & Narcotics
-        Pair(Pattern.compile("\\b(drugs|cocaine|weed|marijuana|ganja|charas|heroin|lsd|meth)\\b", Pattern.CASE_INSENSITIVE), "Drugs & Narcotics"),
-
-        // Category: Gambling & Betting
-        Pair(Pattern.compile("\\b(bet365|1xbet|satta|matka|casino|poker|rummycircle|gambling|betting)\\b", Pattern.CASE_INSENSITIVE), "Gambling & Betting"),
-
-        // Category: Self-Harm & Violence
-        Pair(Pattern.compile("\\b(suicide|kill myself|cut wrists|hang myself|how to die)\\b", Pattern.CASE_INSENSITIVE), "Self-Harm / Violence")
-    )
+class PingService : Service() {
 
     private val db by lazy { FirebaseFirestore.getInstance() }
-    private var lastTriggerTime: Long = 0L
+    private val handler = Handler(Looper.getMainLooper())
+    private var pauseListener: ListenerRegistration? = null
 
-    override fun onAccessibilityEvent(event: AccessibilityEvent?) {
-        if (event == null) return
-
-        val packageName = event.packageName?.toString() ?: ""
-
-        // सिर्फ मॉनिटर्ड ऐप्स (Browser, YouTube, Instagram, FB आदि)
-        if (!monitoredApps.contains(packageName)) {
-            return
-        }
-
-        // 4-सेकंड कूलडाउन ताकि स्पैम अलर्ट न बने
-        val now = System.currentTimeMillis()
-        if (now - lastTriggerTime < 4000) {
-            return
-        }
-
-        val rootNode = rootInActiveWindow ?: return
-        scanAndEnforce(rootNode, packageName)
-    }
-
-    private fun scanAndEnforce(node: AccessibilityNodeInfo?, packageName: String) {
-        if (node == null) return
-
-        val text = node.text?.toString() ?: ""
-        val contentDesc = node.contentDescription?.toString() ?: ""
-        val fullContent = "$text $contentDesc"
-
-        if (fullContent.isNotBlank()) {
-            for ((pattern, category) in safetyRules) {
-                val matcher = pattern.matcher(fullContent)
-                if (matcher.find()) {
-                    val matchedKeyword = matcher.group()
-                    lastTriggerTime = System.currentTimeMillis()
-
-                    val appLabel = getAppNameFromPackage(packageName)
-                    logBlockAlert(matchedKeyword, category, appLabel)
-                    showBlockOverlay(category)
-                    return
-                }
-            }
-        }
-
-        for (i in 0 until node.childCount) {
-            scanAndEnforce(node.getChild(i), packageName)
+    private val pingRunnable = object : Runnable {
+        override fun run() {
+            sendPingToFirebase()
+            handler.postDelayed(this, 15000)
         }
     }
 
-    private fun getAppNameFromPackage(pkg: String): String {
-        return when {
-            pkg.contains("youtube") -> "YouTube"
-            pkg.contains("instagram") -> "Instagram"
-            pkg.contains("facebook") -> "Facebook"
-            pkg.contains("chrome") -> "Google Chrome"
-            pkg.contains("firefox") -> "Firefox"
-            pkg.contains("snapchat") -> "Snapchat"
-            else -> "Web Browser"
-        }
+    override fun onCreate() {
+        super.onCreate()
+        createNotificationChannel()
+        startForeground(1, createNotification())
+        listenForRemotePause()
     }
 
-    // Qustodio-Style Blocked Screen Trigger
-    private fun showBlockOverlay(category: String) {
-        val overlayIntent = Intent(this, BlockActivity::class.java).apply {
-            putExtra("category", category)
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
-        }
-        startActivity(overlayIntent)
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        handler.removeCallbacks(pingRunnable)
+        handler.post(pingRunnable)
+        return START_STICKY
     }
 
-    private fun logBlockAlert(keyword: String, category: String, appName: String) {
+    private fun listenForRemotePause() {
         val prefs = getSharedPreferences("PingParentPrefs", Context.MODE_PRIVATE)
-        val deviceId = prefs.getString("pairing_code", "unknown_device") ?: "unknown_device"
+        val deviceId = prefs.getString("pairing_code", "") ?: ""
 
-        val alertData = hashMapOf(
-            "keyword" to keyword,
-            "category" to category,
-            "app" to appName,
-            "timestamp" to FieldValue.serverTimestamp(),
-            "status" to "Auto-Blocked & Exit"
+        if (deviceId.isNotEmpty()) {
+            pauseListener = db.collection("devices").document(deviceId)
+                .addSnapshotListener { snapshot, _ ->
+                    if (snapshot != null && snapshot.exists()) {
+                        val isPaused = snapshot.getBoolean("isPaused") ?: false
+                        if (isPaused) {
+                            val pauseIntent = Intent(this, PauseActivity::class.java).apply {
+                                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                            }
+                            startActivity(pauseIntent)
+                        }
+                    }
+                }
+        }
+    }
+
+    private fun sendPingToFirebase() {
+        val prefs = getSharedPreferences("PingParentPrefs", Context.MODE_PRIVATE)
+        val deviceId = prefs.getString("pairing_code", "") ?: ""
+
+        if (deviceId.isEmpty()) return
+
+        val batteryLevel = getBatteryPercentage()
+        val isCharging = isDeviceCharging()
+
+        val data = hashMapOf(
+            "lastSeen" to com.google.firebase.firestore.FieldValue.serverTimestamp(),
+            "battery" to batteryLevel,
+            "charging" to isCharging,
+            "status" to "online"
         )
 
-        db.collection("devices")
-            .document(deviceId)
-            .collection("alerts")
-            .add(alertData)
+        db.collection("devices").document(deviceId)
+            .set(data, SetOptions.merge())
     }
 
-    override fun onInterrupt() {}
+    private fun getBatteryPercentage(): Int {
+        val ifilter = IntentFilter(Intent.ACTION_BATTERY_CHANGED)
+        val batteryStatus = registerReceiver(null, ifilter)
+        val level = batteryStatus?.getIntExtra(BatteryManager.EXTRA_LEVEL, -1) ?: -1
+        val scale = batteryStatus?.getIntExtra(BatteryManager.EXTRA_SCALE, -1) ?: -1
+        return if (level >= 0 && scale > 0) ((level / scale.toFloat()) * 100).toInt() else 0
+    }
+
+    private fun isDeviceCharging(): Boolean {
+        val ifilter = IntentFilter(Intent.ACTION_BATTERY_CHANGED)
+        val batteryStatus = registerReceiver(null, ifilter)
+        val status = batteryStatus?.getIntExtra(BatteryManager.EXTRA_STATUS, -1) ?: -1
+        return status == BatteryManager.BATTERY_STATUS_CHARGING || status == BatteryManager.BATTERY_STATUS_FULL
+    }
+
+    private fun createNotificationChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channel = NotificationChannel(
+                "PingParentShield",
+                "PingParent Background Protection",
+                NotificationManager.IMPORTANCE_LOW
+            )
+            val manager = getSystemService(NotificationManager::class.java)
+            manager?.createNotificationChannel(channel)
+        }
+    }
+
+    private fun createNotification(): Notification {
+        return NotificationCompat.Builder(this, "PingParentShield")
+            .setContentTitle("PingParent Shield Active")
+            .setContentText("Keeping this device safe & monitored")
+            .setSmallIcon(android.R.drawable.ic_lock_idle_charging)
+            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .build()
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        handler.removeCallbacks(pingRunnable)
+        pauseListener?.remove()
+    }
+
+    override fun onBind(intent: Intent?): IBinder? = null
 }
