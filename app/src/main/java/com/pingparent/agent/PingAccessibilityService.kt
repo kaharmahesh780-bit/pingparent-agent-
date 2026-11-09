@@ -1,129 +1,98 @@
 package com.pingparent.agent
 
-import android.app.Notification
-import android.app.NotificationChannel
-import android.app.NotificationManager
-import android.app.Service
+import android.accessibilityservice.AccessibilityService
 import android.content.Context
 import android.content.Intent
-import android.content.IntentFilter
-import android.os.BatteryManager
-import android.os.Build
-import android.os.Handler
-import android.os.IBinder
-import android.os.Looper
-import androidx.core.app.NotificationCompat
+import android.view.accessibility.AccessibilityEvent
+import android.view.accessibility.AccessibilityNodeInfo
 import com.google.firebase.firestore.FirebaseFirestore
-import com.google.firebase.firestore.ListenerRegistration
-import com.google.firebase.firestore.SetOptions
 
-class PingService : Service() {
+class PingAccessibilityService : AccessibilityService() {
 
     private val db by lazy { FirebaseFirestore.getInstance() }
-    private val handler = Handler(Looper.getMainLooper())
-    private var pauseListener: ListenerRegistration? = null
+    private var lastTriggerTime: Long = 0
 
-    private val pingRunnable = object : Runnable {
-        override fun run() {
-            sendPingToFirebase()
-            handler.postDelayed(this, 15000)
+    // 5 Major High-Risk Protection Categories
+    private val adultKeywords = listOf("porn", "xxx", "xvideos", "sex", "nude", "erotic", "nsfw", "brazzers")
+    private val alcoholKeywords = listOf("alcohol", "whiskey", "vodka", "beer", "rum", "wine", "buy liquor")
+    private val drugsKeywords = listOf("drugs", "cocaine", "weed", "marijuana", "buy weed", "heroin")
+    private val bettingKeywords = listOf("bet365", "stake casino", "gambling", "lottery online", "teen patti real cash", "1xbet")
+    private val violenceKeywords = listOf("suicide", "how to kill", "bomb making", "self harm")
+
+    override fun onAccessibilityEvent(event: AccessibilityEvent?) {
+        if (event == null) return
+
+        val rootNode = rootInActiveWindow ?: return
+        val textList = mutableListOf<String>()
+        collectAllText(rootNode, textList)
+
+        val fullScreenText = textList.joinToString(" ").lowercase()
+        val packageName = event.packageName?.toString() ?: "app"
+
+        // Check categories
+        val (matchedCategory, matchedWord) = checkCategories(fullScreenText)
+
+        if (matchedCategory != null && matchedWord != null) {
+            val currentTime = System.currentTimeMillis()
+            if (currentTime - lastTriggerTime > 3000) { // 3-second debounce
+                lastTriggerTime = currentTime
+                triggerProtection(packageName, matchedCategory, matchedWord)
+            }
         }
     }
 
-    override fun onCreate() {
-        super.onCreate()
-        createNotificationChannel()
-        startForeground(1, createNotification())
-        listenForRemotePause()
+    private fun checkCategories(text: String): Pair<String?, String?> {
+        for (k in adultKeywords) if (text.contains(k)) return Pair("Adult Content", k)
+        for (k in alcoholKeywords) if (text.contains(k)) return Pair("Alcohol & Tobacco", k)
+        for (k in drugsKeywords) if (text.contains(k)) return Pair("Substances & Drugs", k)
+        for (k in bettingKeywords) if (text.contains(k)) return Pair("Gambling & Bets", k)
+        for (k in violenceKeywords) if (text.contains(k)) return Pair("Violence & Self Harm", k)
+        return Pair(null, null)
     }
 
-    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        handler.removeCallbacks(pingRunnable)
-        handler.post(pingRunnable)
-        return START_STICKY
-    }
-
-    private fun listenForRemotePause() {
+    private fun triggerProtection(appPackage: String, category: String, keyword: String) {
         val prefs = getSharedPreferences("PingParentPrefs", Context.MODE_PRIVATE)
         val deviceId = prefs.getString("pairing_code", "") ?: ""
 
+        // 1. Send Alert Card to Firebase
         if (deviceId.isNotEmpty()) {
-            pauseListener = db.collection("devices").document(deviceId)
-                .addSnapshotListener { snapshot, _ ->
-                    if (snapshot != null && snapshot.exists()) {
-                        val isPaused = snapshot.getBoolean("isPaused") ?: false
-                        if (isPaused) {
-                            val pauseIntent = Intent(this, PauseActivity::class.java).apply {
-                                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
-                            }
-                            startActivity(pauseIntent)
-                        }
-                    }
-                }
-        }
-    }
-
-    private fun sendPingToFirebase() {
-        val prefs = getSharedPreferences("PingParentPrefs", Context.MODE_PRIVATE)
-        val deviceId = prefs.getString("pairing_code", "") ?: ""
-
-        if (deviceId.isEmpty()) return
-
-        val batteryLevel = getBatteryPercentage()
-        val isCharging = isDeviceCharging()
-
-        val data = hashMapOf(
-            "lastSeen" to com.google.firebase.firestore.FieldValue.serverTimestamp(),
-            "battery" to batteryLevel,
-            "charging" to isCharging,
-            "status" to "online"
-        )
-
-        db.collection("devices").document(deviceId)
-            .set(data, SetOptions.merge())
-    }
-
-    private fun getBatteryPercentage(): Int {
-        val ifilter = IntentFilter(Intent.ACTION_BATTERY_CHANGED)
-        val batteryStatus = registerReceiver(null, ifilter)
-        val level = batteryStatus?.getIntExtra(BatteryManager.EXTRA_LEVEL, -1) ?: -1
-        val scale = batteryStatus?.getIntExtra(BatteryManager.EXTRA_SCALE, -1) ?: -1
-        return if (level >= 0 && scale > 0) ((level / scale.toFloat()) * 100).toInt() else 0
-    }
-
-    private fun isDeviceCharging(): Boolean {
-        val ifilter = IntentFilter(Intent.ACTION_BATTERY_CHANGED)
-        val batteryStatus = registerReceiver(null, ifilter)
-        val status = batteryStatus?.getIntExtra(BatteryManager.EXTRA_STATUS, -1) ?: -1
-        return status == BatteryManager.BATTERY_STATUS_CHARGING || status == BatteryManager.BATTERY_STATUS_FULL
-    }
-
-    private fun createNotificationChannel() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(
-                "PingParentShield",
-                "PingParent Background Protection",
-                NotificationManager.IMPORTANCE_LOW
+            val alertData = hashMapOf(
+                "category" to category,
+                "keyword" to keyword,
+                "app" to cleanPackageName(appPackage),
+                "timestamp" to com.google.firebase.firestore.FieldValue.serverTimestamp()
             )
-            val manager = getSystemService(NotificationManager::class.java)
-            manager?.createNotificationChannel(channel)
+            db.collection("devices").document(deviceId)
+                .collection("alerts")
+                .add(alertData)
+        }
+
+        // 2. Launch Qustodio-Style Shield Screen
+        val blockIntent = Intent(this, BlockActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            putExtra("category", category)
+            putExtra("keyword", keyword)
+        }
+        startActivity(blockIntent)
+    }
+
+    private fun cleanPackageName(pkg: String): String {
+        return when {
+            pkg.contains("chrome") -> "Google Chrome"
+            pkg.contains("youtube") -> "YouTube"
+            pkg.contains("instagram") -> "Instagram"
+            else -> pkg
         }
     }
 
-    private fun createNotification(): Notification {
-        return NotificationCompat.Builder(this, "PingParentShield")
-            .setContentTitle("PingParent Shield Active")
-            .setContentText("Keeping this device safe & monitored")
-            .setSmallIcon(android.R.drawable.ic_lock_idle_charging)
-            .setPriority(NotificationCompat.PRIORITY_LOW)
-            .build()
+    private fun collectAllText(node: AccessibilityNodeInfo?, list: MutableList<String>) {
+        if (node == null) return
+        node.text?.let { list.add(it.toString()) }
+        node.contentDescription?.let { list.add(it.toString()) }
+        for (i in 0 until node.childCount) {
+            collectAllText(node.getChild(i), list)
+        }
     }
 
-    override fun onDestroy() {
-        super.onDestroy()
-        handler.removeCallbacks(pingRunnable)
-        pauseListener?.remove()
-    }
-
-    override fun onBind(intent: Intent?): IBinder? = null
+    override fun onInterrupt() {}
 }
