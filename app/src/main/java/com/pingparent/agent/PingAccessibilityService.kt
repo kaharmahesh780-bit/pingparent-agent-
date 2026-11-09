@@ -11,18 +11,22 @@ import java.util.regex.Pattern
 
 class PingAccessibilityService : AccessibilityService() {
 
-    // 1. केवल ब्राउज़र्स को टारगेट करना (कंपीटीटर स्टैंडर्ड)
-    private val monitoredBrowsers = setOf(
+    // Browsers + Social Media platforms
+    private val monitoredApps = setOf(
         "com.android.chrome",
-        "com.google.android.googlequicksearchbox", // Google Search App
+        "com.google.android.googlequicksearchbox",
         "org.mozilla.firefox",
-        "com.microsoft.emmx",                     // Edge
-        "com.sec.android.app.sbrowser",           // Samsung Internet
+        "com.microsoft.emmx",
+        "com.sec.android.app.sbrowser",
         "com.brave.browser",
-        "com.opera.browser"
+        "com.opera.browser",
+        "com.instagram.android",
+        "com.facebook.katana",
+        "com.facebook.lite",
+        "com.twitter.android",
+        "com.google.android.youtube"
     )
 
-    // 2. कंपीटीटर-ग्रेड ब्लैकलिस्ट (एडल्ट साइट्स + कीवर्ड्स बाउंड्री के साथ)
     private val blockedPatterns = listOf(
         Pattern.compile("\\bporn\\b", Pattern.CASE_INSENSITIVE),
         Pattern.compile("\\bxxx\\b", Pattern.CASE_INSENSITIVE),
@@ -43,41 +47,35 @@ class PingAccessibilityService : AccessibilityService() {
 
         val packageName = event.packageName?.toString() ?: ""
 
-        // कंपीटीटर रूल: अगर ब्राउज़र या सर्च ऐप नहीं है, तो बिल्कुल इग्नोर करो
-        if (!monitoredBrowsers.contains(packageName)) {
+        if (!monitoredApps.contains(packageName)) {
             return
         }
 
-        // स्पैम प्रिवेंशन: 5 सेकंड का लॉकआउट ताकि पैरेंट को 1 ही क्लीन अलर्ट जाए
+        // 4-second cooldown to prevent duplicate logs
         val now = System.currentTimeMillis()
-        if (now - lastTriggerTime < 5000) {
+        if (now - lastTriggerTime < 4000) {
             return
         }
 
         val rootNode = rootInActiveWindow ?: return
-        scanBrowserNodes(rootNode)
+        scanAndBlock(rootNode)
     }
 
-    private fun scanBrowserNodes(node: AccessibilityNodeInfo?) {
+    private fun scanAndBlock(node: AccessibilityNodeInfo?) {
         if (node == null) return
 
         val text = node.text?.toString() ?: ""
         val contentDesc = node.contentDescription?.toString() ?: ""
-        val combined = "$text $contentDesc"
+        val fullContent = "$text $contentDesc"
 
-        if (combined.isNotBlank()) {
+        if (fullContent.isNotBlank()) {
             for (pattern in blockedPatterns) {
-                val matcher = pattern.matcher(combined)
+                val matcher = pattern.matcher(fullContent)
                 if (matcher.find()) {
                     val matchedKeyword = matcher.group()
-
-                    // टाइमर लॉक ताकि मल्टीपल ट्रिगर्स न हों
                     lastTriggerTime = System.currentTimeMillis()
 
-                    // 1. फायरबेस में अलर्ट सेव करो
                     logBlockAlert(matchedKeyword)
-
-                    // 2. तुरंत होम स्क्रीन पर रीडायरेक्ट करो
                     redirectToHome()
                     return
                 }
@@ -85,7 +83,7 @@ class PingAccessibilityService : AccessibilityService() {
         }
 
         for (i in 0 until node.childCount) {
-            scanBrowserNodes(node.getChild(i))
+            scanAndBlock(node.getChild(i))
         }
     }
 
