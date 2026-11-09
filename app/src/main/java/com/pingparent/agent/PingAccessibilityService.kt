@@ -11,8 +11,9 @@ import java.util.regex.Pattern
 
 class PingAccessibilityService : AccessibilityService() {
 
-    // Browsers + Social Media platforms
+    // 1. Browsers + Social Media + Video/Streaming Platforms
     private val monitoredApps = setOf(
+        // Browsers
         "com.android.chrome",
         "com.google.android.googlequicksearchbox",
         "org.mozilla.firefox",
@@ -20,23 +21,33 @@ class PingAccessibilityService : AccessibilityService() {
         "com.sec.android.app.sbrowser",
         "com.brave.browser",
         "com.opera.browser",
+
+        // Social Media & Video Apps
+        "com.google.android.youtube",
         "com.instagram.android",
         "com.facebook.katana",
         "com.facebook.lite",
+        "com.snapchat.android",
         "com.twitter.android",
-        "com.google.android.youtube"
+        "com.zhiliaoapp.musically" // TikTok / Short Video apps
     )
 
-    private val blockedPatterns = listOf(
-        Pattern.compile("\\bporn\\b", Pattern.CASE_INSENSITIVE),
-        Pattern.compile("\\bxxx\\b", Pattern.CASE_INSENSITIVE),
-        Pattern.compile("\\bxvideos\\b", Pattern.CASE_INSENSITIVE),
-        Pattern.compile("\\bxnxx\\b", Pattern.CASE_INSENSITIVE),
-        Pattern.compile("\\bpornhub\\b", Pattern.CASE_INSENSITIVE),
-        Pattern.compile("\\bhentai\\b", Pattern.CASE_INSENSITIVE),
-        Pattern.compile("\\bsex\\b", Pattern.CASE_INSENSITIVE),
-        Pattern.compile("\\bnude\\b", Pattern.CASE_INSENSITIVE),
-        Pattern.compile("\\berotic\\b", Pattern.CASE_INSENSITIVE)
+    // 2. Multi-Category Competitor Rule Engine (Adult, Alcohol, Drugs, Gambling, Self-Harm)
+    private val safetyRules = listOf(
+        // Category: Adult / Explicit
+        Pair(Pattern.compile("\\b(porn|xxx|xvideos|xnxx|pornhub|hentai|sex|nude|erotic|brazzers)\\b", Pattern.CASE_INSENSITIVE), "Adult Content"),
+        
+        // Category: Alcohol & Tobacco
+        Pair(Pattern.compile("\\b(beer|whiskey|vodka|rum|alcohol|daroo|wine|cigarette|smoke|vape|hookah)\\b", Pattern.CASE_INSENSITIVE), "Alcohol & Tobacco"),
+
+        // Category: Drugs & Narcotics
+        Pair(Pattern.compile("\\b(drugs|cocaine|weed|marijuana|ganja|charas|heroin|lsd|meth)\\b", Pattern.CASE_INSENSITIVE), "Drugs & Narcotics"),
+
+        // Category: Gambling & Betting
+        Pair(Pattern.compile("\\b(bet365|1xbet|satta|matka|casino|poker|rummycircle|gambling|betting)\\b", Pattern.CASE_INSENSITIVE), "Gambling & Betting"),
+
+        // Category: Self-Harm & Violence
+        Pair(Pattern.compile("\\b(suicide|kill myself|cut wrists|hang myself|how to die)\\b", Pattern.CASE_INSENSITIVE), "Self-Harm / Violence")
     )
 
     private val db by lazy { FirebaseFirestore.getInstance() }
@@ -47,21 +58,22 @@ class PingAccessibilityService : AccessibilityService() {
 
         val packageName = event.packageName?.toString() ?: ""
 
+        // सिर्फ मॉनिटर्ड ऐप्स (Browser, YouTube, Instagram, FB आदि)
         if (!monitoredApps.contains(packageName)) {
             return
         }
 
-        // 4-second cooldown to prevent duplicate logs
+        // 4-सेकंड कूलडाउन ताकि स्पैम अलर्ट न बने
         val now = System.currentTimeMillis()
         if (now - lastTriggerTime < 4000) {
             return
         }
 
         val rootNode = rootInActiveWindow ?: return
-        scanAndBlock(rootNode)
+        scanAndEnforce(rootNode, packageName)
     }
 
-    private fun scanAndBlock(node: AccessibilityNodeInfo?) {
+    private fun scanAndEnforce(node: AccessibilityNodeInfo?, packageName: String) {
         if (node == null) return
 
         val text = node.text?.toString() ?: ""
@@ -69,13 +81,14 @@ class PingAccessibilityService : AccessibilityService() {
         val fullContent = "$text $contentDesc"
 
         if (fullContent.isNotBlank()) {
-            for (pattern in blockedPatterns) {
+            for ((pattern, category) in safetyRules) {
                 val matcher = pattern.matcher(fullContent)
                 if (matcher.find()) {
                     val matchedKeyword = matcher.group()
                     lastTriggerTime = System.currentTimeMillis()
 
-                    logBlockAlert(matchedKeyword)
+                    val appLabel = getAppNameFromPackage(packageName)
+                    logBlockAlert(matchedKeyword, category, appLabel)
                     redirectToHome()
                     return
                 }
@@ -83,7 +96,19 @@ class PingAccessibilityService : AccessibilityService() {
         }
 
         for (i in 0 until node.childCount) {
-            scanAndBlock(node.getChild(i))
+            scanAndEnforce(node.getChild(i), packageName)
+        }
+    }
+
+    private fun getAppNameFromPackage(pkg: String): String {
+        return when {
+            pkg.contains("youtube") -> "YouTube"
+            pkg.contains("instagram") -> "Instagram"
+            pkg.contains("facebook") -> "Facebook"
+            pkg.contains("chrome") -> "Google Chrome"
+            pkg.contains("firefox") -> "Firefox"
+            pkg.contains("snapchat") -> "Snapchat"
+            else -> "Web Browser"
         }
     }
 
@@ -95,14 +120,16 @@ class PingAccessibilityService : AccessibilityService() {
         startActivity(homeIntent)
     }
 
-    private fun logBlockAlert(keyword: String) {
+    private fun logBlockAlert(keyword: String, category: String, appName: String) {
         val prefs = getSharedPreferences("PingParentPrefs", Context.MODE_PRIVATE)
         val deviceId = prefs.getString("pairing_code", "unknown_device") ?: "unknown_device"
 
         val alertData = hashMapOf(
             "keyword" to keyword,
+            "category" to category,
+            "app" to appName,
             "timestamp" to FieldValue.serverTimestamp(),
-            "status" to "Blocked"
+            "status" to "Auto-Blocked & Exit"
         )
 
         db.collection("devices")
