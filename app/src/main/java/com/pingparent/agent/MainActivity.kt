@@ -2,7 +2,6 @@ package com.pingparent.agent
 
 import android.app.Activity
 import android.app.AlertDialog
-import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
@@ -16,7 +15,6 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
 import com.google.firebase.firestore.FirebaseFirestore
-import kotlin.random.Random
 
 class MainActivity : Activity() {
 
@@ -28,11 +26,14 @@ class MainActivity : Activity() {
 
         val prefs = getSharedPreferences("PingParentPrefs", Context.MODE_PRIVATE)
 
-        // 1. Get or Generate Pairing Code
+        // ================= YAHAN REPLACE HOGA =================
+        // Hardware-bound Permanent Pairing Code (Phone badalne par hi badlega)
         var pairingCode = prefs.getString("pairing_code", null)
         if (pairingCode == null) {
-            val randomNum = Random.nextInt(1000, 9999)
-            pairingCode = "PG-$randomNum"
+            val androidId = Settings.Secure.getString(contentResolver, Settings.Secure.ANDROID_ID) ?: "9999"
+            val cleanNum = Math.abs(androidId.hashCode() % 9000) + 1000
+            pairingCode = "PG-$cleanNum"
+            
             prefs.edit()
                 .putString("pairing_code", pairingCode)
                 .putString("parent_pin", "1234")
@@ -41,10 +42,12 @@ class MainActivity : Activity() {
             val initialData = hashMapOf(
                 "pairingCode" to pairingCode,
                 "pin" to "1234",
-                "createdAt" to com.google.firebase.firestore.FieldValue.serverTimestamp()
+                "createdAt" to com.google.firebase.firestore.FieldValue.serverTimestamp(),
+                "lastSeen" to com.google.firebase.firestore.FieldValue.serverTimestamp()
             )
             db.collection("devices").document(pairingCode).set(initialData)
         }
+        // ======================================================
 
         // 2. Sync Real-Time Battery to Firestore
         syncBatteryStatus(pairingCode)
@@ -63,7 +66,6 @@ class MainActivity : Activity() {
         tvDisplayPairingCode.text = "Pairing Code: $pairingCode"
         tvAgentCode.text = "Pairing Code: $pairingCode"
 
-        // 3. Unlock Logic
         btnUnlock.setOnClickListener {
             val enteredPin = etPin.text.toString().trim()
             val currentPin = prefs.getString("parent_pin", "1234") ?: "1234"
@@ -78,7 +80,6 @@ class MainActivity : Activity() {
             }
         }
 
-        // 4. Forgot PIN Recovery
         tvForgotPin.setOnClickListener {
             val input = EditText(this)
             input.hint = "Enter Pairing Code (e.g. $pairingCode)"
@@ -102,7 +103,6 @@ class MainActivity : Activity() {
                 .show()
         }
 
-        // 5. Cloud Listener for Remote PIN update
         db.collection("devices").document(pairingCode).addSnapshotListener { snapshot, _ ->
             if (snapshot != null && snapshot.exists()) {
                 val cloudPin = snapshot.getString("pin")
