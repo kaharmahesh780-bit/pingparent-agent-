@@ -89,7 +89,7 @@ class PingAccessibilityService : AccessibilityService() {
 
                     val appLabel = getAppNameFromPackage(packageName)
                     logBlockAlert(matchedKeyword, category, appLabel)
-                    redirectToHome()
+                    showBlockOverlay(category)
                     return
                 }
             }
@@ -112,12 +112,13 @@ class PingAccessibilityService : AccessibilityService() {
         }
     }
 
-    private fun redirectToHome() {
-        val homeIntent = Intent(Intent.ACTION_MAIN).apply {
-            addCategory(Intent.CATEGORY_HOME)
+    // Qustodio-Style Blocked Screen Trigger
+    private fun showBlockOverlay(category: String) {
+        val overlayIntent = Intent(this, BlockActivity::class.java).apply {
+            putExtra("category", category)
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
         }
-        startActivity(homeIntent)
+        startActivity(overlayIntent)
     }
 
     private fun logBlockAlert(keyword: String, category: String, appName: String) {
