@@ -1,61 +1,65 @@
 package com.pingparent.agent
 
 import android.accessibilityservice.AccessibilityService
+import android.content.Intent
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.firestore.FieldValue
 
 class PingAccessibilityService : AccessibilityService() {
 
     private val blockedKeywords = listOf(
-        "fuck", "porn", "xxx", "sex", "adult", "xvideos", "xnxx", "nude", "pussy"
+        "porn", "xxx", "sex", "adult", "xvideos", "xnxx", "nude", "erotic"
     )
 
-    private val blockedPackages = listOf(
-        "com.instagram.android"
-    )
+    private val db by lazy { FirebaseFirestore.getInstance() }
+    private val deviceId = "child_device_01" // Aapka configured Device ID
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
+        if (event == null) return
+
         val rootNode = rootInActiveWindow ?: return
-        val packageName = event?.packageName?.toString() ?: ""
-
-        // 1. Direct App Block (Instagram)
-        if (blockedPackages.any { packageName.contains(it, ignoreCase = true) }) {
-            kickOutToHome()
-            return
-        }
-
-        // 2. Strict Browser Shield (Chrome)
-        if (packageName.contains("chrome", ignoreCase = true)) {
-            if (scanNodeRecursively(rootNode)) {
-                kickOutToHome()
-                return
-            }
-        }
+        checkAndBlockContent(rootNode)
     }
 
-    private fun scanNodeRecursively(node: AccessibilityNodeInfo?): Boolean {
-        if (node == null) return false
+    private fun checkAndBlockContent(node: AccessibilityNodeInfo?) {
+        if (node == null) return
 
         val text = node.text?.toString()?.lowercase() ?: ""
-        val desc = node.contentDescription?.toString()?.lowercase() ?: ""
+        val contentDesc = node.contentDescription?.toString()?.lowercase() ?: ""
 
-        for (badWord in blockedKeywords) {
-            if (text.contains(badWord) || desc.contains(badWord)) {
-                return true
+        for (keyword in blockedKeywords) {
+            if (text.contains(keyword) || contentDesc.contains(keyword)) {
+                // 1. Log alert directly to Firestore for Parent Dashboard
+                logBlockAlert(keyword)
+
+                // 2. Redirect to Home Screen
+                val homeIntent = Intent(Intent.ACTION_MAIN).apply {
+                    addCategory(Intent.CATEGORY_HOME)
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                }
+                startActivity(homeIntent)
+                return
             }
         }
 
         for (i in 0 until node.childCount) {
-            val child = node.getChild(i)
-            if (scanNodeRecursively(child)) {
-                return true
-            }
+            checkAndBlockContent(node.getChild(i))
         }
-        return false
     }
 
-    private fun kickOutToHome() {
-        performGlobalAction(GLOBAL_ACTION_HOME)
+    private fun logBlockAlert(matchedWord: String) {
+        val alertData = hashMapOf(
+            "keyword" to matchedWord,
+            "timestamp" to FieldValue.serverTimestamp(),
+            "status" to "Blocked"
+        )
+
+        db.collection("devices")
+            .document(deviceId)
+            .collection("alerts")
+            .add(alertData)
     }
 
     override fun onInterrupt() {}
