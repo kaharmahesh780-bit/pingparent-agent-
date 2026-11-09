@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#090D16"
+    android:gravity="center"
+    android:orientation="vertical"
+    android:padding="32dp">
+
+    <!-- Shield Icon Badge -->
+    <TextView
+        android:layout_width="96dp"
+        android:layout_height="96dp"
+        android:background="#151F32"
+        android:gravity="center"
+        android:text="🛡️"
+        android:textSize="44sp" />
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="28dp"
+        android:text="Content Restricted"
+        android:textColor="#FFFFFF"
+        android:textSize="24sp"
+        android:textStyle="bold" />
+
+    <TextView
+        android:id="@+id/tvBlockedReason"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="12dp"
+        android:gravity="center"
+        android:text="This search or app activity was restricted by PingParent Shield to keep your browsing safe."
+        android:textColor="#94A3B8"
+        android:textSize="14sp"
+        android:lineSpacingExtra="4dp" />
+
+    <TextView
+        android:id="@+id/tvCategoryBadge"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="20dp"
+        android:background="#2E1065"
+        android:paddingHorizontal="16dp"
+        android:paddingVertical="6dp"
+        android:text="Category: Adult / Restricted"
+        android:textColor="#C084FC"
+        android:textSize="12sp"
+        android:textStyle="bold" />
+
+    <!-- Action Button -->
+    <Button
+        android:id="@+id/btnGoBack"
+        android:layout_width="match_parent"
+        android:layout_height="52dp"
+        android:layout_marginTop="40dp"
+        android:backgroundTint="#10B981"
+        android:text="Back to Safety"
+        android:textColor="#090D16"
+        android:textSize="15sp"
+        android:textStyle="bold" />
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="24dp"
+        android:text="Protected by PingParent"
+        android:textColor="#475569"
+        android:textSize="12sp"
+        android:textStyle="bold" />
+
+</LinearLayout>
