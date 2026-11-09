@@ -13,77 +13,85 @@ import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
-import com.google.firebase.FirebaseApp
+import androidx.core.app.NotificationCompat
 import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.firestore.ListenerRegistration
+import com.google.firebase.firestore.SetOptions
 import java.util.Calendar
 
 class PingService : Service() {
 
+    private val db by lazy { FirebaseFirestore.getInstance() }
     private val handler = Handler(Looper.getMainLooper())
-    private lateinit var db: FirebaseFirestore
-    private val pingInterval = 60000L // 1 minute
+    private var pauseListener: ListenerRegistration? = null
+    private val pingInterval = 15000L // 15 सेकंड में बैटरी व ऑनलाइन हार्टबीट सिंक
 
     private val pingRunnable = object : Runnable {
         override fun run() {
-            sendPing()
+            sendPingToFirebase()
             handler.postDelayed(this, pingInterval)
         }
     }
 
     override fun onCreate() {
         super.onCreate()
-        FirebaseApp.initializeApp(this)
-        db = FirebaseFirestore.getInstance()
-        startForegroundServiceWithNotification()
+        createNotificationChannel()
+        startForeground(101, createNotification())
+        listenForRemotePause()
         handler.post(pingRunnable)
     }
 
-    private fun startForegroundServiceWithNotification() {
-        val channelId = "pingparent_agent_channel"
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(
-                channelId,
-                "PingParent Service",
-                NotificationManager.IMPORTANCE_LOW
-            )
-            val manager = getSystemService(NotificationManager::class.java)
-            manager.createNotificationChannel(channel)
-        }
-
-        val notification: Notification = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            Notification.Builder(this, channelId)
-                .setContentTitle("PingParent Agent Active")
-                .setContentText("Monitoring device in background")
-                .setSmallIcon(android.R.drawable.stat_notify_sync)
-                .build()
-        } else {
-            Notification.Builder(this)
-                .setContentTitle("PingParent Agent Active")
-                .setContentText("Monitoring device in background")
-                .setSmallIcon(android.R.drawable.stat_notify_sync)
-                .build()
-        }
-
-        startForeground(101, notification)
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        return START_STICKY
     }
 
-    private fun sendPing() {
+    // 1. रिमोट पॉज लिसनर - जैसे ही पैरेंट डैशबोर्ड से पॉज दबाएगा, यह स्क्रीन ऊपर खींच लाएगा
+    private fun listenForRemotePause() {
         val prefs = getSharedPreferences("PingParentPrefs", Context.MODE_PRIVATE)
-        val code = prefs.getString("paired_code", null) ?: return
+        val deviceId = prefs.getString("pairing_code", null) 
+            ?: prefs.getString("paired_code", "") ?: ""
 
-        val (batteryLevel, isCharging) = getBatteryInfo()
+        if (deviceId.isNotEmpty()) {
+            pauseListener = db.collection("devices").document(deviceId)
+                .addSnapshotListener { snapshot, _ ->
+                    if (snapshot != null && snapshot.exists()) {
+                        val isPaused = snapshot.getBoolean("isPaused") ?: false
+                        if (isPaused) {
+                            val pauseIntent = Intent(this, PauseActivity::class.java).apply {
+                                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                                addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                                addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
+                            }
+                            startActivity(pauseIntent)
+                        }
+                    }
+                }
+        }
+    }
+
+    // 2. डिवाइस का लाइव स्टेटस, बैटरी और स्क्रीन-टाइम भेजना
+    private fun sendPingToFirebase() {
+        val prefs = getSharedPreferences("PingParentPrefs", Context.MODE_PRIVATE)
+        val deviceId = prefs.getString("pairing_code", null) 
+            ?: prefs.getString("paired_code", "") ?: ""
+
+        if (deviceId.isEmpty()) return
+
+        val batteryLevel = getBatteryPercentage()
+        val isCharging = isDeviceCharging()
         val screenTimeMinutes = getDailyScreenTimeMinutes()
 
-        val updates = hashMapOf<String, Any>(
-            "status" to "paired",
-            "isOnline" to true,
-            "lastSeen" to System.currentTimeMillis(),
-            "batteryLevel" to batteryLevel,
-            "isCharging" to isCharging,
+        val data = hashMapOf(
+            "lastSeen" to com.google.firebase.firestore.FieldValue.serverTimestamp(),
+            "battery" to batteryLevel,
+            "charging" to isCharging,
+            "status" to "online",
             "dailyScreenTimeMinutes" to screenTimeMinutes
         )
 
-        db.collection("devices").document(code).update(updates)
+        db.collection("devices").document(deviceId)
+            .set(data, SetOptions.merge())
     }
 
     private fun getDailyScreenTimeMinutes(): Long {
@@ -113,25 +121,47 @@ class PingService : Service() {
         return totalTimeMillis / (1000 * 60)
     }
 
-    private fun getBatteryInfo(): Pair<Int, Boolean> {
-        val filter = IntentFilter(Intent.ACTION_BATTERY_CHANGED)
-        val batteryStatus: Intent? = registerReceiver(null, filter)
-
+    private fun getBatteryPercentage(): Int {
+        val ifilter = IntentFilter(Intent.ACTION_BATTERY_CHANGED)
+        val batteryStatus = registerReceiver(null, ifilter)
         val level = batteryStatus?.getIntExtra(BatteryManager.EXTRA_LEVEL, -1) ?: -1
         val scale = batteryStatus?.getIntExtra(BatteryManager.EXTRA_SCALE, -1) ?: -1
-        val batteryPct = if (level >= 0 && scale > 0) (level * 100 / scale) else -1
-
-        val status = batteryStatus?.getIntExtra(BatteryManager.EXTRA_STATUS, -1) ?: -1
-        val isCharging = status == BatteryManager.BATTERY_STATUS_CHARGING ||
-                status == BatteryManager.BATTERY_STATUS_FULL
-
-        return Pair(batteryPct, isCharging)
+        return if (level >= 0 && scale > 0) ((level / scale.toFloat()) * 100).toInt() else 0
     }
 
-    override fun onBind(intent: Intent?): IBinder? = null
+    private fun isDeviceCharging(): Boolean {
+        val ifilter = IntentFilter(Intent.ACTION_BATTERY_CHANGED)
+        val batteryStatus = registerReceiver(null, ifilter)
+        val status = batteryStatus?.getIntExtra(BatteryManager.EXTRA_STATUS, -1) ?: -1
+        return status == BatteryManager.BATTERY_STATUS_CHARGING || status == BatteryManager.BATTERY_STATUS_FULL
+    }
+
+    private fun createNotificationChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channel = NotificationChannel(
+                "PingParentShield",
+                "PingParent Service",
+                NotificationManager.IMPORTANCE_LOW
+            )
+            val manager = getSystemService(NotificationManager::class.java)
+            manager?.createNotificationChannel(channel)
+        }
+    }
+
+    private fun createNotification(): Notification {
+        return NotificationCompat.Builder(this, "PingParentShield")
+            .setContentTitle("PingParent Shield Active")
+            .setContentText("Keeping this device safe & monitored")
+            .setSmallIcon(android.R.drawable.stat_notify_sync)
+            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .build()
+    }
 
     override fun onDestroy() {
         super.onDestroy()
         handler.removeCallbacks(pingRunnable)
+        pauseListener?.remove()
     }
+
+    override fun onBind(intent: Intent?): IBinder? = null
 }
