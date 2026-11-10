@@ -5,6 +5,7 @@ import android.app.AlertDialog
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.content.pm.PackageManager
 import android.os.BatteryManager
 import android.os.Bundle
 import android.provider.Settings
@@ -15,6 +16,7 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
 import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.firestore.SetOptions
 
 class MainActivity : Activity() {
 
@@ -26,8 +28,7 @@ class MainActivity : Activity() {
 
         val prefs = getSharedPreferences("PingParentPrefs", Context.MODE_PRIVATE)
 
-        // ================= YAHAN REPLACE HOGA =================
-        // Hardware-bound Permanent Pairing Code (Phone badalne par hi badlega)
+        // 1. Hardware-bound Permanent Pairing Code
         var pairingCode = prefs.getString("pairing_code", null)
         if (pairingCode == null) {
             val androidId = Settings.Secure.getString(contentResolver, Settings.Secure.ANDROID_ID) ?: "9999"
@@ -47,10 +48,12 @@ class MainActivity : Activity() {
             )
             db.collection("devices").document(pairingCode).set(initialData)
         }
-        // ======================================================
 
         // 2. Sync Real-Time Battery to Firestore
         syncBatteryStatus(pairingCode)
+
+        // 3. Scan & Sync All Installed Apps to Firestore
+        syncInstalledAppsDirectly(pairingCode)
 
         val pinContainer = findViewById<LinearLayout>(R.id.pinContainer)
         val mainContentContainer = findViewById<LinearLayout>(R.id.mainContentContainer)
@@ -120,6 +123,53 @@ class MainActivity : Activity() {
             mainContentContainer.visibility = View.GONE
             pinContainer.visibility = View.VISIBLE
         }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        val prefs = getSharedPreferences("PingParentPrefs", Context.MODE_PRIVATE)
+        val pairingCode = prefs.getString("pairing_code", null)
+        if (pairingCode != null) {
+            syncInstalledAppsDirectly(pairingCode)
+        }
+    }
+
+    private fun syncInstalledAppsDirectly(deviceId: String) {
+        Thread {
+            try {
+                val pm = packageManager
+                val intent = Intent(Intent.ACTION_MAIN, null).apply {
+                    addCategory(Intent.CATEGORY_LAUNCHER)
+                }
+                val resolveInfoList = pm.queryIntentActivities(intent, 0)
+                val appsList = ArrayList<HashMap<String, String>>()
+
+                for (info in resolveInfoList) {
+                    val pkg = info.activityInfo.packageName
+                    if (pkg == packageName) continue
+
+                    val name = info.loadLabel(pm).toString()
+                    val item = HashMap<String, String>()
+                    item["name"] = name
+                    item["package"] = pkg
+                    appsList.add(item)
+                }
+
+                val distinctApps = appsList.distinctBy { it["package"] }
+
+                if (distinctApps.isNotEmpty()) {
+                    db.collection("devices").document(deviceId)
+                        .set(mapOf("installedApps" to distinctApps), SetOptions.merge())
+                        .addOnSuccessListener {
+                            runOnUiThread {
+                                Toast.makeText(this@MainActivity, "Apps Synced: ${distinctApps.size}", Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }.start()
     }
 
     private fun syncBatteryStatus(pairingCode: String) {
