@@ -23,7 +23,7 @@ class PingService : Service() {
 
     private val db by lazy { FirebaseFirestore.getInstance() }
     private val handler = Handler(Looper.getMainLooper())
-    private val PING_INTERVAL = 60000L // 60 seconds battery-friendly timer
+    private val PING_INTERVAL = 60000L // 60 seconds
     private var appsSyncedOnce = false
 
     private val pingRunnable = object : Runnable {
@@ -89,7 +89,7 @@ class PingService : Service() {
             try {
                 val pm = packageManager
                 val packages = pm.getInstalledApplications(PackageManager.GET_META_DATA)
-                val appsList = ArrayList>()
+                val appsList = ArrayList<HashMap<String, String>>()
 
                 for (appInfo in packages) {
                     val isSystemApp = (appInfo.flags and ApplicationInfo.FLAG_SYSTEM) != 0
@@ -99,19 +99,18 @@ class PingService : Service() {
                         if (appInfo.packageName == packageName) continue
 
                         val appName = pm.getApplicationLabel(appInfo).toString()
-                        appsList.add(
-                            mapOf(
-                                "name" to appName,
-                                "package" to appInfo.packageName
-                            )
-                        )
+                        val item = HashMap<String, String>()
+                        item["name"] = appName
+                        item["package"] = appInfo.packageName
+                        appsList.add(item)
                     }
                 }
 
-                appsList.sortBy { it["name"]?.lowercase() }
+                val updateData = HashMap<String, Any>()
+                updateData["installedApps"] = appsList
 
                 db.collection("devices").document(deviceId)
-                    .set(mapOf("installedApps" to appsList), SetOptions.merge())
+                    .set(updateData, SetOptions.merge())
             } catch (e: Exception) {
                 e.printStackTrace()
             }
