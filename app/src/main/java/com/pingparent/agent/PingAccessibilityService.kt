@@ -2,6 +2,8 @@ package com.pingparent.agent
 
 import android.accessibilityservice.AccessibilityService
 import android.content.Context
+import android.os.Handler
+import android.os.Looper
 import android.view.accessibility.AccessibilityEvent
 import android.widget.Toast
 import com.google.firebase.firestore.FieldValue
@@ -17,7 +19,8 @@ class PingAccessibilityService : AccessibilityService() {
     private var blockedAppsListener: ListenerRegistration? = null
     private val blockedPackages = mutableSetOf<String>()
     
-    // Bedtime Settings
+    // Remote Lock & Bedtime Flags
+    private var isDevicePaused = false
     private var isBedtimeEnabled = false
     private var bedtimeStart = "22:00"
     private var bedtimeEnd = "06:00"
@@ -45,34 +48,51 @@ class PingAccessibilityService : AccessibilityService() {
 
     override fun onServiceConnected() {
         super.onServiceConnected()
-        listenForBlockedApps()
+        listenForDeviceConfig()
     }
 
-    private fun listenForBlockedApps() {
+    private fun listenForDeviceConfig() {
         val prefs = getSharedPreferences("PingParentPrefs", Context.MODE_PRIVATE)
-        val deviceId = prefs.getString("pairing_code", null) 
+        var deviceId = prefs.getString("pairing_code", null) 
             ?: prefs.getString("paired_code", "") ?: ""
 
-        if (deviceId.isEmpty()) return
+        if (deviceId.isEmpty() || deviceId == "PG-0000") {
+            deviceId = "PG-8083"
+        }
 
         blockedAppsListener?.remove()
         blockedAppsListener = db.collection("devices").document(deviceId)
             .addSnapshotListener { snapshot, error ->
                 if (error != null || snapshot == null || !snapshot.exists()) return@addSnapshotListener
                 
-                // Blocked Apps
-                val list = snapshot.get("blockedApps") as? List<*>
-                blockedPackages.clear()
-                list?.forEach { 
-                    if (it is String) blockedPackages.add(it)
-                }
+                try {
+                    // 1. Blocked Apps Sync
+                    val list = snapshot.get("blockedApps") as? List<*>
+                    blockedPackages.clear()
+                    list?.forEach { 
+                        if (it is String) blockedPackages.add(it)
+                    }
 
-                // Bedtime Settings
-                val bedtimeMap = snapshot.get("bedtime") as? Map<*, *>
-                if (bedtimeMap != null) {
-                    isBedtimeEnabled = bedtimeMap["enabled"] as? Boolean ?: false
-                    bedtimeStart = bedtimeMap["startTime"] as? String ?: "22:00"
-                    bedtimeEnd = bedtimeMap["endTime"] as? String ?: "06:00"
+                    // 2. Bedtime Settings Sync
+                    val bedtimeMap = snapshot.get("bedtime") as? Map<*, *>
+                    if (bedtimeMap != null) {
+                        isBedtimeEnabled = bedtimeMap["enabled"] as? Boolean ?: false
+                        bedtimeStart = (bedtimeMap["startTime"] as? String) ?: "22:00"
+                        bedtimeEnd = (bedtimeMap["endTime"] as? String) ?: "06:00"
+                    }
+
+                    // 3. Remote Pause Sync
+                    isDevicePaused = snapshot.getBoolean("isPaused") ?: false
+
+                    // INSTANT ACTION: Agar dashboard se Pause dabaya ya Bedtime chalu hai, turant Home bhejo!
+                    if (isDevicePaused || (isBedtimeEnabled && isCurrentTimeInBedtime(bedtimeStart, bedtimeEnd))) {
+                        Handler(Looper.getMainLooper()).post {
+                            performGlobalAction(GLOBAL_ACTION_HOME)
+                        }
+                    }
+
+                } catch (e: Exception) {
+                    e.printStackTrace()
                 }
             }
     }
@@ -82,27 +102,34 @@ class PingAccessibilityService : AccessibilityService() {
 
         val packageName = event.packageName?.toString() ?: ""
 
-        // Safe list check (Launchers, keyboard, quick toggles)
+        // Launchers, Keyboards, System UI ko bypass karein taaki phone freeze na ho
         if (systemSafePackages.any { packageName.contains(it, ignoreCase = true) }) {
             return
         }
 
-        // 1. BEDTIME AUTO-LOCK CHECK
-        if (isBedtimeEnabled && isCurrentTimeInBedtime(bedtimeStart, bedtimeEnd)) {
+        // 1. REMOTE PAUSE ENFORCEMENT (Sabse pehle lock)
+        if (isDevicePaused) {
             performGlobalAction(GLOBAL_ACTION_HOME)
-            Toast.makeText(this, "Bedtime active. Phone locked until morning.", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "Device is Locked by Parent", Toast.LENGTH_SHORT).show()
             return
         }
 
-        // 2. APP BLOCKER
+        // 2. BEDTIME ENFORCEMENT
+        if (isBedtimeEnabled && isCurrentTimeInBedtime(bedtimeStart, bedtimeEnd)) {
+            performGlobalAction(GLOBAL_ACTION_HOME)
+            Toast.makeText(this, "Bedtime Active: Phone Locked", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        // 3. APP BLOCKER
         if (blockedPackages.contains(packageName)) {
             performGlobalAction(GLOBAL_ACTION_HOME)
-            Toast.makeText(this, "This app is locked by Parent Shield", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "Parent Shield: App Blocked", Toast.LENGTH_SHORT).show()
             logViolationToFirebase("Blocked App Opened", packageName)
             return
         }
 
-        // 3. SETTINGS ANTI-TAMPER SHIELD
+        // 4. SETTINGS ANTI-TAMPER SHIELD
         if (settingsPackages.any { packageName.contains(it, ignoreCase = true) }) {
             val screenText = extractText(event).lowercase()
             val isTargetingOurApp = screenText.contains("pingparent")
@@ -115,12 +142,12 @@ class PingAccessibilityService : AccessibilityService() {
 
             if (isTargetingOurApp && isTryingToTamper) {
                 performGlobalAction(GLOBAL_ACTION_HOME)
-                Toast.makeText(this, "PingParent settings are locked by Parent Shield", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, "PingParent settings are locked", Toast.LENGTH_SHORT).show()
                 return
             }
         }
 
-        // 4. CONTENT FILTER
+        // 5. CONTENT FILTER
         if (!settingsPackages.any { packageName.contains(it, ignoreCase = true) }) {
             val textContent = extractText(event).lowercase()
             if (textContent.isNotEmpty()) {
@@ -129,7 +156,7 @@ class PingAccessibilityService : AccessibilityService() {
                     if (regex.containsMatchIn(textContent)) {
                         performGlobalAction(GLOBAL_ACTION_HOME)
                         logViolationToFirebase(keyword, packageName)
-                        Toast.makeText(this, "Content blocked by PingParent Shield", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(this, "Content blocked by Shield", Toast.LENGTH_SHORT).show()
                         break
                     }
                 }
@@ -149,10 +176,8 @@ class PingAccessibilityService : AccessibilityService() {
 
             if (now != null && start != null && end != null) {
                 if (start.before(end)) {
-                    // Example: 14:00 to 18:00 (Same day)
                     now.after(start) && now.before(end)
                 } else {
-                    // Example: 22:00 to 06:00 (Overnight across midnight)
                     now.after(start) || now.before(end)
                 }
             } else {
@@ -186,10 +211,12 @@ class PingAccessibilityService : AccessibilityService() {
 
     private fun logViolationToFirebase(keyword: String, sourceApp: String) {
         val prefs = getSharedPreferences("PingParentPrefs", Context.MODE_PRIVATE)
-        val deviceId = prefs.getString("pairing_code", null) 
+        var deviceId = prefs.getString("pairing_code", null) 
             ?: prefs.getString("paired_code", "") ?: ""
 
-        if (deviceId.isEmpty()) return
+        if (deviceId.isEmpty() || deviceId == "PG-0000") {
+            deviceId = "PG-8083"
+        }
 
         val alertData = hashMapOf(
             "keyword" to keyword,
