@@ -2,23 +2,21 @@ package com.pingparent.agent
 
 import android.accessibilityservice.AccessibilityService
 import android.content.Context
-import android.content.Intent
 import android.view.accessibility.AccessibilityEvent
 import android.widget.Toast
 import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
-import com.google.firebase.firestore.SetOptions
 
 class PingAccessibilityService : AccessibilityService() {
 
     private val db by lazy { FirebaseFirestore.getInstance() }
 
-    // 1. प्रतिबंधित कीवर्ड्स (वेब व सर्च फ़िल्टर)
+    // 1. Harmful keywords filter (Browsers aur search ke liye)
     private val blockedKeywords = listOf(
         "porn", "xxx", "adult", "sex", "gambling", "casino", "betting", "rummy", "hack"
     )
 
-    // 2. सेटिंग्स प्रोटेक्शन - जिन पैकेजेस में सेटिंग्स या ऐप मैनेजमेंट होता है
+    // 2. Sirf system settings aur installer packages
     private val settingsPackages = listOf(
         "com.android.settings",
         "com.miui.securitycenter",
@@ -30,33 +28,40 @@ class PingAccessibilityService : AccessibilityService() {
 
         val packageName = event.packageName?.toString() ?: ""
 
-        // A. SETTINGS SHIELD: अगर बच्चा सेटिंग्स या सिक्योरिटी सेंटर खोलने की कोशिश करे
+        // A. SETTINGS PROTECTION (Strict & Targeted)
+        // Sirf tab trigger kare jab package Android Settings ya MIUI Security Center ho
         if (settingsPackages.any { packageName.contains(it, ignoreCase = true) }) {
-            // अगर स्क्रीन पर Accessibility, Apps, या Agent का नाम आ रहा हो
             val screenText = extractText(event).lowercase()
-            val dangerousSections = listOf(
-                "pingparent", "accessibility", "manage apps", "app info", 
-                "special permissions", "uninstall", "force stop", "clear data"
-            )
 
-            if (dangerousSections.any { screenText.contains(it) }) {
-                // तुरंत होम स्क्रीन पर बाहर भेजें
+            // Check: Kya screen par PingParent app open hai?
+            val isTargetingOurApp = screenText.contains("pingparent")
+
+            // Check: Kya destructive action button samne hai?
+            val isDestructiveAction = screenText.contains("uninstall") ||
+                    screenText.contains("force stop") ||
+                    screenText.contains("clear data") ||
+                    screenText.contains("clear storage")
+
+            // Sirf jab dono match honge tabhi block hoga (Poori settings open rahegi)
+            if (isTargetingOurApp && isDestructiveAction) {
                 performGlobalAction(GLOBAL_ACTION_HOME)
-                Toast.makeText(this, "Settings are protected by Parent Shield", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, "PingParent cannot be stopped or uninstalled", Toast.LENGTH_SHORT).show()
                 return
             }
         }
 
-        // B. CONTENT FILTER: हानिकारक कीवर्ड्स डिटेक्ट करना
-        val textContent = extractText(event).lowercase()
-        if (textContent.isNotEmpty()) {
-            for (keyword in blockedKeywords) {
-                if (textContent.contains(keyword)) {
-                    // ब्राउज़र या ऐप तुरंत बंद करके होम स्क्रीन लाएं
-                    performGlobalAction(GLOBAL_ACTION_HOME)
-                    logViolationToFirebase(keyword, packageName)
-                    Toast.makeText(this, "Content blocked by PingParent Shield", Toast.LENGTH_SHORT).show()
-                    break
+        // B. CONTENT FILTER (Browsers & other apps only)
+        // Settings app ke andar keyword filter scan nahi karega taaki self-lock na ho
+        if (!settingsPackages.any { packageName.contains(it, ignoreCase = true) }) {
+            val textContent = extractText(event).lowercase()
+            if (textContent.isNotEmpty()) {
+                for (keyword in blockedKeywords) {
+                    if (textContent.contains(keyword)) {
+                        performGlobalAction(GLOBAL_ACTION_HOME)
+                        logViolationToFirebase(keyword, packageName)
+                        Toast.makeText(this, "Content blocked by PingParent Shield", Toast.LENGTH_SHORT).show()
+                        break
+                    }
                 }
             }
         }
@@ -85,7 +90,7 @@ class PingAccessibilityService : AccessibilityService() {
 
     private fun logViolationToFirebase(keyword: String, sourceApp: String) {
         val prefs = getSharedPreferences("PingParentPrefs", Context.MODE_PRIVATE)
-        val deviceId = prefs.getString("pairing_code", null) 
+        val deviceId = prefs.getString("pairing_code", null)
             ?: prefs.getString("paired_code", "") ?: ""
 
         if (deviceId.isEmpty()) return
