@@ -14,16 +14,27 @@ class PingAccessibilityService : AccessibilityService() {
     private var blockedAppsListener: ListenerRegistration? = null
     private val blockedPackages = mutableSetOf<String>()
 
-    // 1. प्रतिबंधित कीवर्ड्स (वेब व सर्च फ़िल्टर)
+    // 1. Pratibandhit keywords
     private val blockedKeywords = listOf(
         "porn", "xxx", "adult", "sex", "gambling", "casino", "betting", "rummy", "hack"
     )
 
-    // 2. सेटिंग्स प्रोटेक्शन पैकेजेस
+    // 2. Settings protection packages
     private val settingsPackages = listOf(
         "com.android.settings",
         "com.miui.securitycenter",
         "com.google.android.packageinstaller"
+    )
+
+    // 3. System safe packages (Notification shade, keyboard, launchers ko bypass)
+    private val systemSafePackages = listOf(
+        "com.android.systemui",
+        "com.google.android.apps.nexuslauncher",
+        "com.miui.home",
+        "com.sec.android.app.launcher",
+        "com.mi.android.globalminusscreen",
+        "com.preff.kb.xm",
+        "com.google.android.inputmethod.latin"
     )
 
     override fun onServiceConnected() {
@@ -56,7 +67,12 @@ class PingAccessibilityService : AccessibilityService() {
 
         val packageName = event.packageName?.toString() ?: ""
 
-        // A. APP BLOCKER: अगर यह ऐप पैरेंट द्वारा ब्लॉक की गई लिस्ट में है
+        // Agar notification panel, keyboard ya launcher hai toh seedha return
+        if (systemSafePackages.any { packageName.contains(it, ignoreCase = true) }) {
+            return
+        }
+
+        // A. APP BLOCKER: Parent dwara block ki gayi app
         if (blockedPackages.contains(packageName)) {
             performGlobalAction(GLOBAL_ACTION_HOME)
             Toast.makeText(this, "This app is locked by Parent Shield", Toast.LENGTH_SHORT).show()
@@ -64,7 +80,7 @@ class PingAccessibilityService : AccessibilityService() {
             return
         }
 
-        // B. SETTINGS SHIELD: अगर कोई अनइंस्टॉल या फ़ोर्स स्टॉप करने की कोशिश करे
+        // B. SETTINGS SHIELD: PingParent ko rokne ya uninstall karne se bachana
         if (settingsPackages.any { packageName.contains(it, ignoreCase = true) }) {
             val screenText = extractText(event).lowercase()
             val isTargetingOurApp = screenText.contains("pingparent")
@@ -80,12 +96,13 @@ class PingAccessibilityService : AccessibilityService() {
             }
         }
 
-        // C. CONTENT FILTER: वेब और ब्राउज़र में कीवर्ड डिटेक्शन
+        // C. CONTENT FILTER: Sirf external apps/browser me exact word match
         if (!settingsPackages.any { packageName.contains(it, ignoreCase = true) }) {
             val textContent = extractText(event).lowercase()
             if (textContent.isNotEmpty()) {
                 for (keyword in blockedKeywords) {
-                    if (textContent.contains(keyword)) {
+                    val regex = Regex("\\b${Regex.escape(keyword)}\\b", RegexOption.IGNORE_CASE)
+                    if (regex.containsMatchIn(textContent)) {
                         performGlobalAction(GLOBAL_ACTION_HOME)
                         logViolationToFirebase(keyword, packageName)
                         Toast.makeText(this, "Content blocked by PingParent Shield", Toast.LENGTH_SHORT).show()
