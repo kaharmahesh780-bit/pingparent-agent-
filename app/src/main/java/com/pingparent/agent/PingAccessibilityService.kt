@@ -6,43 +6,73 @@ import android.view.accessibility.AccessibilityEvent
 import android.widget.Toast
 import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.firestore.ListenerRegistration
 
 class PingAccessibilityService : AccessibilityService() {
 
     private val db by lazy { FirebaseFirestore.getInstance() }
+    private var blockedAppsListener: ListenerRegistration? = null
+    private val blockedPackages = mutableSetOf<String>()
 
-    // 1. Harmful keywords filter (Browsers aur search ke liye)
+    // 1. प्रतिबंधित कीवर्ड्स (वेब व सर्च फ़िल्टर)
     private val blockedKeywords = listOf(
         "porn", "xxx", "adult", "sex", "gambling", "casino", "betting", "rummy", "hack"
     )
 
-    // 2. Sirf system settings aur installer packages
+    // 2. सेटिंग्स प्रोटेक्शन पैकेजेस
     private val settingsPackages = listOf(
         "com.android.settings",
         "com.miui.securitycenter",
         "com.google.android.packageinstaller"
     )
 
+    override fun onServiceConnected() {
+        super.onServiceConnected()
+        listenForBlockedApps()
+    }
+
+    private fun listenForBlockedApps() {
+        val prefs = getSharedPreferences("PingParentPrefs", Context.MODE_PRIVATE)
+        val deviceId = prefs.getString("pairing_code", null) 
+            ?: prefs.getString("paired_code", "") ?: ""
+
+        if (deviceId.isEmpty()) return
+
+        blockedAppsListener?.remove()
+        blockedAppsListener = db.collection("devices").document(deviceId)
+            .addSnapshotListener { snapshot, error ->
+                if (error != null || snapshot == null || !snapshot.exists()) return@addSnapshotListener
+                
+                val list = snapshot.get("blockedApps") as? List<*>
+                blockedPackages.clear()
+                list?.forEach { 
+                    if (it is String) blockedPackages.add(it)
+                }
+            }
+    }
+
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event == null) return
 
         val packageName = event.packageName?.toString() ?: ""
 
-        // A. SETTINGS PROTECTION (Strict & Targeted)
-        // Sirf tab trigger kare jab package Android Settings ya MIUI Security Center ho
+        // A. APP BLOCKER: अगर यह ऐप पैरेंट द्वारा ब्लॉक की गई लिस्ट में है
+        if (blockedPackages.contains(packageName)) {
+            performGlobalAction(GLOBAL_ACTION_HOME)
+            Toast.makeText(this, "This app is locked by Parent Shield", Toast.LENGTH_SHORT).show()
+            logViolationToFirebase("Blocked App Opened", packageName)
+            return
+        }
+
+        // B. SETTINGS SHIELD: अगर कोई अनइंस्टॉल या फ़ोर्स स्टॉप करने की कोशिश करे
         if (settingsPackages.any { packageName.contains(it, ignoreCase = true) }) {
             val screenText = extractText(event).lowercase()
-
-            // Check: Kya screen par PingParent app open hai?
             val isTargetingOurApp = screenText.contains("pingparent")
-
-            // Check: Kya destructive action button samne hai?
             val isDestructiveAction = screenText.contains("uninstall") ||
                     screenText.contains("force stop") ||
                     screenText.contains("clear data") ||
                     screenText.contains("clear storage")
 
-            // Sirf jab dono match honge tabhi block hoga (Poori settings open rahegi)
             if (isTargetingOurApp && isDestructiveAction) {
                 performGlobalAction(GLOBAL_ACTION_HOME)
                 Toast.makeText(this, "PingParent cannot be stopped or uninstalled", Toast.LENGTH_SHORT).show()
@@ -50,8 +80,7 @@ class PingAccessibilityService : AccessibilityService() {
             }
         }
 
-        // B. CONTENT FILTER (Browsers & other apps only)
-        // Settings app ke andar keyword filter scan nahi karega taaki self-lock na ho
+        // C. CONTENT FILTER: वेब और ब्राउज़र में कीवर्ड डिटेक्शन
         if (!settingsPackages.any { packageName.contains(it, ignoreCase = true) }) {
             val textContent = extractText(event).lowercase()
             if (textContent.isNotEmpty()) {
@@ -90,7 +119,7 @@ class PingAccessibilityService : AccessibilityService() {
 
     private fun logViolationToFirebase(keyword: String, sourceApp: String) {
         val prefs = getSharedPreferences("PingParentPrefs", Context.MODE_PRIVATE)
-        val deviceId = prefs.getString("pairing_code", null)
+        val deviceId = prefs.getString("pairing_code", null) 
             ?: prefs.getString("paired_code", "") ?: ""
 
         if (deviceId.isEmpty()) return
@@ -98,13 +127,18 @@ class PingAccessibilityService : AccessibilityService() {
         val alertData = hashMapOf(
             "keyword" to keyword,
             "app" to sourceApp,
-            "category" to "Protected Keyword",
+            "category" to "Shield Block",
             "timestamp" to FieldValue.serverTimestamp()
         )
 
         db.collection("devices").document(deviceId)
             .collection("alerts")
             .add(alertData)
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        blockedAppsListener?.remove()
     }
 
     override fun onInterrupt() {}
