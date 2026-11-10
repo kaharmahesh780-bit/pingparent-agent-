@@ -23,16 +23,11 @@ class PingService : Service() {
 
     private val db by lazy { FirebaseFirestore.getInstance() }
     private val handler = Handler(Looper.getMainLooper())
-    private val PING_INTERVAL = 60000L // 60 seconds
-    private var appsSyncedOnce = false
+    private val PING_INTERVAL = 60000L // 60s battery-friendly timer
 
     private val pingRunnable = object : Runnable {
         override fun run() {
             sendDevicePing()
-            if (!appsSyncedOnce) {
-                syncInstalledApps()
-                appsSyncedOnce = true
-            }
             handler.postDelayed(this, PING_INTERVAL)
         }
     }
@@ -42,10 +37,14 @@ class PingService : Service() {
         createNotificationChannel()
         val notification = createNotification()
         startForeground(101, notification)
+
+        // सर्विस शुरू होते ही तुरंत ऐप्स स्कैन करें
+        handler.postDelayed({ syncInstalledApps() }, 2000L)
         handler.post(pingRunnable)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        handler.postDelayed({ syncInstalledApps() }, 1000L)
         return START_STICKY
     }
 
@@ -88,29 +87,28 @@ class PingService : Service() {
         Thread {
             try {
                 val pm = packageManager
-                val packages = pm.getInstalledApplications(PackageManager.GET_META_DATA)
+                val intent = Intent(Intent.ACTION_MAIN, null).apply {
+                    addCategory(Intent.CATEGORY_LAUNCHER)
+                }
+                val resolveInfoList = pm.queryIntentActivities(intent, 0)
                 val appsList = ArrayList<HashMap<String, String>>()
 
-                for (appInfo in packages) {
-                    val isSystemApp = (appInfo.flags and ApplicationInfo.FLAG_SYSTEM) != 0
-                    val isUpdatedSystemApp = (appInfo.flags and ApplicationInfo.FLAG_UPDATED_SYSTEM_APP) != 0
+                for (info in resolveInfoList) {
+                    val pkg = info.activityInfo.packageName
+                    if (pkg == packageName) continue
 
-                    if (!isSystemApp || isUpdatedSystemApp || pm.getLaunchIntentForPackage(appInfo.packageName) != null) {
-                        if (appInfo.packageName == packageName) continue
-
-                        val appName = pm.getApplicationLabel(appInfo).toString()
-                        val item = HashMap<String, String>()
-                        item["name"] = appName
-                        item["package"] = appInfo.packageName
-                        appsList.add(item)
-                    }
+                    val name = info.loadLabel(pm).toString()
+                    val item = HashMap<String, String>()
+                    item["name"] = name
+                    item["package"] = pkg
+                    appsList.add(item)
                 }
 
-                val updateData = HashMap<String, Any>()
-                updateData["installedApps"] = appsList
+                // डुप्लिकेट्स हटाएँ
+                val distinctApps = appsList.distinctBy { it["package"] }
 
                 db.collection("devices").document(deviceId)
-                    .set(updateData, SetOptions.merge())
+                    .set(mapOf("installedApps" to distinctApps), SetOptions.merge())
             } catch (e: Exception) {
                 e.printStackTrace()
             }
