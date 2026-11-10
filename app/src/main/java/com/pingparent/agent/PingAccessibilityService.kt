@@ -30,6 +30,7 @@ class PingAccessibilityService : AccessibilityService() {
     private val systemSafePackages = listOf(
         "com.android.systemui",
         "com.google.android.apps.nexuslauncher",
+        "com.motorola.launcher3",
         "com.miui.home",
         "com.sec.android.app.launcher",
         "com.mi.android.globalminusscreen",
@@ -80,18 +81,22 @@ class PingAccessibilityService : AccessibilityService() {
             return
         }
 
-        // B. SETTINGS SHIELD: PingParent ko rokne ya uninstall karne se bachana
+        // B. SETTINGS SHIELD: PingParent ko band ya uninstall karne se bachana
         if (settingsPackages.any { packageName.contains(it, ignoreCase = true) }) {
             val screenText = extractText(event).lowercase()
+            
+            // Agar Settings ke andar "PingParent" ka page khul raha hai (App Info ya Accessibility Band karne ke liye)
             val isTargetingOurApp = screenText.contains("pingparent")
-            val isDestructiveAction = screenText.contains("uninstall") ||
+            val isTryingToTamper = screenText.contains("accessibility") ||
+                    screenText.contains("uninstall") ||
                     screenText.contains("force stop") ||
                     screenText.contains("clear data") ||
-                    screenText.contains("clear storage")
+                    screenText.contains("clear storage") ||
+                    screenText.contains("off")
 
-            if (isTargetingOurApp && isDestructiveAction) {
+            if (isTargetingOurApp && isTryingToTamper) {
                 performGlobalAction(GLOBAL_ACTION_HOME)
-                Toast.makeText(this, "PingParent cannot be stopped or uninstalled", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, "PingParent settings are locked by Parent Shield", Toast.LENGTH_SHORT).show()
                 return
             }
         }
