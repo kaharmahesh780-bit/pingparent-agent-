@@ -6,233 +6,205 @@ import android.os.Handler
 import android.os.Looper
 import android.view.accessibility.AccessibilityEvent
 import android.widget.Toast
+import com.google.firebase.FirebaseApp
 import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.ListenerRegistration
-import java.text.SimpleDateFormat
 import java.util.Calendar
-import java.util.Locale
 
 class PingAccessibilityService : AccessibilityService() {
 
-    private val db by lazy { FirebaseFirestore.getInstance() }
-    private var blockedAppsListener: ListenerRegistration? = null
-    private val blockedPackages = mutableSetOf<String>()
+    private var db: FirebaseFirestore? = null
+    private var docListener: ListenerRegistration? = null
+    private val blockedPackages = HashSet<String>()
     
-    // Remote Lock & Bedtime Flags
     private var isDevicePaused = false
     private var isBedtimeEnabled = false
-    private var bedtimeStart = "22:00"
-    private var bedtimeEnd = "06:00"
+    private var bedtimeStartMinutes = 22 * 60 // 22:00
+    private var bedtimeEndMinutes = 6 * 60    // 06:00
 
-    private val blockedKeywords = listOf(
-        "porn", "xxx", "adult", "sex", "gambling", "casino", "betting", "rummy", "hack"
-    )
-
-    private val settingsPackages = listOf(
-        "com.android.settings",
-        "com.miui.securitycenter",
-        "com.google.android.packageinstaller"
-    )
-
-    private val systemSafePackages = listOf(
+    private val safeSystemPackages = setOf(
         "com.android.systemui",
+        "com.miui.home",
         "com.google.android.apps.nexuslauncher",
         "com.motorola.launcher3",
-        "com.miui.home",
         "com.sec.android.app.launcher",
-        "com.mi.android.globalminusscreen",
-        "com.preff.kb.xm",
         "com.google.android.inputmethod.latin"
     )
 
     override fun onServiceConnected() {
         super.onServiceConnected()
-        listenForDeviceConfig()
+        try {
+            if (FirebaseApp.getApps(this).isEmpty()) {
+                FirebaseApp.initializeApp(this)
+            }
+            db = FirebaseFirestore.getInstance()
+            attachFirestoreSync()
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
     }
 
-    private fun listenForDeviceConfig() {
-        val prefs = getSharedPreferences("PingParentPrefs", Context.MODE_PRIVATE)
-        var deviceId = prefs.getString("pairing_code", null) 
-            ?: prefs.getString("paired_code", "") ?: ""
+    private fun attachFirestoreSync() {
+        try {
+            val prefs = getSharedPreferences("PingParentPrefs", Context.MODE_PRIVATE)
+            var deviceId = prefs.getString("pairing_code", null) 
+                ?: prefs.getString("paired_code", "") ?: ""
 
-        if (deviceId.isEmpty() || deviceId == "PG-0000") {
-            deviceId = "PG-8083"
-        }
-
-        blockedAppsListener?.remove()
-        blockedAppsListener = db.collection("devices").document(deviceId)
-            .addSnapshotListener { snapshot, error ->
-                if (error != null || snapshot == null || !snapshot.exists()) return@addSnapshotListener
-                
-                try {
-                    // 1. Blocked Apps Sync
-                    val list = snapshot.get("blockedApps") as? List<*>
-                    blockedPackages.clear()
-                    list?.forEach { 
-                        if (it is String) blockedPackages.add(it)
-                    }
-
-                    // 2. Bedtime Settings Sync
-                    val bedtimeMap = snapshot.get("bedtime") as? Map<*, *>
-                    if (bedtimeMap != null) {
-                        isBedtimeEnabled = bedtimeMap["enabled"] as? Boolean ?: false
-                        bedtimeStart = (bedtimeMap["startTime"] as? String) ?: "22:00"
-                        bedtimeEnd = (bedtimeMap["endTime"] as? String) ?: "06:00"
-                    }
-
-                    // 3. Remote Pause Sync
-                    isDevicePaused = snapshot.getBoolean("isPaused") ?: false
-
-                    // INSTANT ACTION: Agar dashboard se Pause dabaya ya Bedtime chalu hai, turant Home bhejo!
-                    if (isDevicePaused || (isBedtimeEnabled && isCurrentTimeInBedtime(bedtimeStart, bedtimeEnd))) {
-                        Handler(Looper.getMainLooper()).post {
-                            performGlobalAction(GLOBAL_ACTION_HOME)
-                        }
-                    }
-
-                } catch (e: Exception) {
-                    e.printStackTrace()
-                }
+            if (deviceId.isEmpty() || deviceId == "PG-0000") {
+                deviceId = "PG-9380"
             }
+
+            val firestore = db ?: FirebaseFirestore.getInstance()
+            docListener?.remove()
+            docListener = firestore.collection("devices").document(deviceId)
+                .addSnapshotListener { snapshot, error ->
+                    if (error != null || snapshot == null || !snapshot.exists()) return@addSnapshotListener
+                    
+                    try {
+                        // 1. Blocked Apps Sync
+                        val list = snapshot.get("blockedApps") as? List<*>
+                        synchronized(blockedPackages) {
+                            blockedPackages.clear()
+                            list?.forEach { item ->
+                                if (item is String) blockedPackages.add(item.trim())
+                            }
+                        }
+
+                        // 2. Bedtime Sync
+                        val bedtimeMap = snapshot.get("bedtime") as? Map<*, *>
+                        if (bedtimeMap != null) {
+                            isBedtimeEnabled = bedtimeMap["enabled"] as? Boolean ?: false
+                            val startStr = (bedtimeMap["startTime"] as? String) ?: "22:00"
+                            val endStr = (bedtimeMap["endTime"] as? String) ?: "06:00"
+                            bedtimeStartMinutes = parseTimeToMinutes(startStr)
+                            bedtimeEndMinutes = parseTimeToMinutes(endStr)
+                        }
+
+                        // 3. Pause Screen Sync
+                        isDevicePaused = snapshot.getBoolean("isPaused") ?: false
+
+                        // Check state immediately
+                        if (isDevicePaused || (isBedtimeEnabled && isNowInBedtime())) {
+                            triggerHomeScreen()
+                        }
+                    } catch (e: Exception) {
+                        e.printStackTrace()
+                    }
+                }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event == null) return
 
-        val packageName = event.packageName?.toString() ?: ""
+        try {
+            val rawPackage = event.packageName?.toString() ?: return
+            val packageName = rawPackage.trim()
 
-        // Launchers, Keyboards, System UI ko bypass karein taaki phone freeze na ho
-        if (systemSafePackages.any { packageName.contains(it, ignoreCase = true) }) {
-            return
-        }
+            if (safeSystemPackages.contains(packageName)) return
 
-        // 1. REMOTE PAUSE ENFORCEMENT (Sabse pehle lock)
-        if (isDevicePaused) {
-            performGlobalAction(GLOBAL_ACTION_HOME)
-            Toast.makeText(this, "Device is Locked by Parent", Toast.LENGTH_SHORT).show()
-            return
-        }
-
-        // 2. BEDTIME ENFORCEMENT
-        if (isBedtimeEnabled && isCurrentTimeInBedtime(bedtimeStart, bedtimeEnd)) {
-            performGlobalAction(GLOBAL_ACTION_HOME)
-            Toast.makeText(this, "Bedtime Active: Phone Locked", Toast.LENGTH_SHORT).show()
-            return
-        }
-
-        // 3. APP BLOCKER
-        if (blockedPackages.contains(packageName)) {
-            performGlobalAction(GLOBAL_ACTION_HOME)
-            Toast.makeText(this, "Parent Shield: App Blocked", Toast.LENGTH_SHORT).show()
-            logViolationToFirebase("Blocked App Opened", packageName)
-            return
-        }
-
-        // 4. SETTINGS ANTI-TAMPER SHIELD
-        if (settingsPackages.any { packageName.contains(it, ignoreCase = true) }) {
-            val screenText = extractText(event).lowercase()
-            val isTargetingOurApp = screenText.contains("pingparent")
-            val isTryingToTamper = screenText.contains("accessibility") ||
-                    screenText.contains("uninstall") ||
-                    screenText.contains("force stop") ||
-                    screenText.contains("clear data") ||
-                    screenText.contains("clear storage") ||
-                    screenText.contains("off")
-
-            if (isTargetingOurApp && isTryingToTamper) {
-                performGlobalAction(GLOBAL_ACTION_HOME)
-                Toast.makeText(this, "PingParent settings are locked", Toast.LENGTH_SHORT).show()
+            // 1. Remote Instant Lock
+            if (isDevicePaused) {
+                triggerHomeScreen()
+                showToast("Device is Locked by Parent")
                 return
             }
-        }
 
-        // 5. CONTENT FILTER
-        if (!settingsPackages.any { packageName.contains(it, ignoreCase = true) }) {
-            val textContent = extractText(event).lowercase()
-            if (textContent.isNotEmpty()) {
-                for (keyword in blockedKeywords) {
-                    val regex = Regex("\\b${Regex.escape(keyword)}\\b", RegexOption.IGNORE_CASE)
-                    if (regex.containsMatchIn(textContent)) {
-                        performGlobalAction(GLOBAL_ACTION_HOME)
-                        logViolationToFirebase(keyword, packageName)
-                        Toast.makeText(this, "Content blocked by Shield", Toast.LENGTH_SHORT).show()
-                        break
-                    }
-                }
+            // 2. Bedtime Lock
+            if (isBedtimeEnabled && isNowInBedtime()) {
+                triggerHomeScreen()
+                showToast("Bedtime Active: Phone Locked")
+                return
             }
+
+            // 3. App Blocking Check (Direct Package Match)
+            val shouldBlock = synchronized(blockedPackages) {
+                blockedPackages.contains(packageName)
+            }
+
+            if (shouldBlock) {
+                triggerHomeScreen()
+                showToast("App is Blocked by Parent")
+                logViolation(packageName)
+                return
+            }
+
+        } catch (e: Exception) {
+            e.printStackTrace()
         }
     }
 
-    private fun isCurrentTimeInBedtime(startStr: String, endStr: String): Boolean {
-        return try {
-            val sdf = SimpleDateFormat("HH:mm", Locale.getDefault())
-            val nowCalendar = Calendar.getInstance()
-            val nowStr = sdf.format(nowCalendar.time)
-            
-            val now = sdf.parse(nowStr)
-            val start = sdf.parse(startStr)
-            val end = sdf.parse(endStr)
+    private fun triggerHomeScreen() {
+        Handler(Looper.getMainLooper()).post {
+            try {
+                performGlobalAction(GLOBAL_ACTION_HOME)
+            } catch (e: Exception) {}
+        }
+    }
 
-            if (now != null && start != null && end != null) {
-                if (start.before(end)) {
-                    now.after(start) && now.before(end)
-                } else {
-                    now.after(start) || now.before(end)
-                }
+    private fun showToast(msg: String) {
+        Handler(Looper.getMainLooper()).post {
+            try {
+                Toast.makeText(applicationContext, msg, Toast.LENGTH_SHORT).show()
+            } catch (e: Exception) {}
+        }
+    }
+
+    private fun parseTimeToMinutes(timeStr: String): Int {
+        return try {
+            val parts = timeStr.split(":")
+            val h = parts[0].toInt()
+            val m = parts[1].toInt()
+            (h * 60) + m
+        } catch (e: Exception) {
+            0
+        }
+    }
+
+    private fun isNowInBedtime(): Boolean {
+        return try {
+            val cal = Calendar.getInstance()
+            val currentMinutes = (cal.get(Calendar.HOUR_OF_DAY) * 60) + cal.get(Calendar.MINUTE)
+
+            if (bedtimeStartMinutes <= bedtimeEndMinutes) {
+                currentMinutes in bedtimeStartMinutes..bedtimeEndMinutes
             } else {
-                false
+                currentMinutes >= bedtimeStartMinutes || currentMinutes < bedtimeEndMinutes
             }
         } catch (e: Exception) {
             false
         }
     }
 
-    private fun extractText(event: AccessibilityEvent): String {
-        val sb = java.lang.StringBuilder()
-        event.text?.forEach { sb.append(it).append(" ") }
-        val rootNode = rootInActiveWindow
-        if (rootNode != null) {
-            val textList = mutableListOf<String>()
-            findTextNodes(rootNode, textList)
-            textList.forEach { sb.append(it).append(" ") }
-        }
-        return sb.toString()
-    }
+    private fun logViolation(blockedApp: String) {
+        try {
+            val prefs = getSharedPreferences("PingParentPrefs", Context.MODE_PRIVATE)
+            var deviceId = prefs.getString("pairing_code", null) 
+                ?: prefs.getString("paired_code", "") ?: ""
 
-    private fun findTextNodes(node: android.view.accessibility.AccessibilityNodeInfo?, list: MutableList<String>) {
-        if (node == null) return
-        node.text?.let { list.add(it.toString()) }
-        node.contentDescription?.let { list.add(it.toString()) }
-        for (i in 0 until node.childCount) {
-            findTextNodes(node.getChild(i), list)
-        }
-    }
+            if (deviceId.isEmpty() || deviceId == "PG-0000") {
+                deviceId = "PG-9380"
+            }
 
-    private fun logViolationToFirebase(keyword: String, sourceApp: String) {
-        val prefs = getSharedPreferences("PingParentPrefs", Context.MODE_PRIVATE)
-        var deviceId = prefs.getString("pairing_code", null) 
-            ?: prefs.getString("paired_code", "") ?: ""
+            val alertData = hashMapOf(
+                "keyword" to "Blocked App Opened",
+                "app" to blockedApp,
+                "category" to "Shield Block",
+                "timestamp" to FieldValue.serverTimestamp()
+            )
 
-        if (deviceId.isEmpty() || deviceId == "PG-0000") {
-            deviceId = "PG-8083"
-        }
-
-        val alertData = hashMapOf(
-            "keyword" to keyword,
-            "app" to sourceApp,
-            "category" to "Shield Block",
-            "timestamp" to FieldValue.serverTimestamp()
-        )
-
-        db.collection("devices").document(deviceId)
-            .collection("alerts")
-            .add(alertData)
+            (db ?: FirebaseFirestore.getInstance()).collection("devices").document(deviceId)
+                .collection("alerts")
+                .add(alertData)
+        } catch (e: Exception) {}
     }
 
     override fun onDestroy() {
         super.onDestroy()
-        blockedAppsListener?.remove()
+        docListener?.remove()
     }
 
     override fun onInterrupt() {}
