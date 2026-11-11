@@ -20,8 +20,8 @@ class PingAccessibilityService : AccessibilityService() {
     
     private var isDevicePaused = false
     private var isBedtimeEnabled = false
-    private var bedtimeStartMinutes = 22 * 60 // 22:00
-    private var bedtimeEndMinutes = 6 * 60    // 06:00
+    private var bedtimeStartMinutes = 22 * 60 // 22:00 (1320 mins)
+    private var bedtimeEndMinutes = 6 * 60    // 06:00 (360 mins)
 
     private val safeSystemPackages = setOf(
         "com.android.systemui",
@@ -71,20 +71,33 @@ class PingAccessibilityService : AccessibilityService() {
                             }
                         }
 
-                        // 2. Bedtime Sync
+                        // 2. Bedtime Sync (Number Map & String Support)
                         val bedtimeMap = snapshot.get("bedtime") as? Map<*, *>
                         if (bedtimeMap != null) {
                             isBedtimeEnabled = bedtimeMap["enabled"] as? Boolean ?: false
-                            val startStr = (bedtimeMap["startTime"] as? String) ?: "22:00"
-                            val endStr = (bedtimeMap["endTime"] as? String) ?: "06:00"
-                            bedtimeStartMinutes = parseTimeToMinutes(startStr)
-                            bedtimeEndMinutes = parseTimeToMinutes(endStr)
+
+                            val startHour = (bedtimeMap["startHour"] as? Long)?.toInt()
+                            val startMinute = (bedtimeMap["startMinute"] as? Long)?.toInt()
+                            val endHour = (bedtimeMap["endHour"] as? Long)?.toInt()
+                            val endMinute = (bedtimeMap["endMinute"] as? Long)?.toInt()
+
+                            if (startHour != null && startMinute != null && endHour != null && endMinute != null) {
+                                bedtimeStartMinutes = (startHour * 60) + startMinute
+                                bedtimeEndMinutes = (endHour * 60) + endMinute
+                            } else {
+                                val startStr = (bedtimeMap["startTime"] as? String) ?: "22:00"
+                                val endStr = (bedtimeMap["endTime"] as? String) ?: "06:00"
+                                bedtimeStartMinutes = parseTimeToMinutes(startStr)
+                                bedtimeEndMinutes = parseTimeToMinutes(endStr)
+                            }
                         }
 
-                        // 3. Pause Screen Sync
-                        isDevicePaused = snapshot.getBoolean("isPaused") ?: false
+                        // 3. Pause Screen & Force Block Sync
+                        val paused = snapshot.getBoolean("isPaused") ?: false
+                        val forceBlocked = snapshot.getBoolean("isForceBlocked") ?: false
+                        isDevicePaused = paused || forceBlocked
 
-                        // Check state immediately
+                        // Check state immediately upon receiving updates
                         if (isDevicePaused || (isBedtimeEnabled && isNowInBedtime())) {
                             triggerHomeScreen()
                         }
@@ -106,7 +119,7 @@ class PingAccessibilityService : AccessibilityService() {
 
             if (safeSystemPackages.contains(packageName)) return
 
-            // 1. Remote Instant Lock
+            // 1. Remote Instant Lock (Pause / Force Block)
             if (isDevicePaused) {
                 triggerHomeScreen()
                 showToast("Device is Locked by Parent")
@@ -170,8 +183,9 @@ class PingAccessibilityService : AccessibilityService() {
             val currentMinutes = (cal.get(Calendar.HOUR_OF_DAY) * 60) + cal.get(Calendar.MINUTE)
 
             if (bedtimeStartMinutes <= bedtimeEndMinutes) {
-                currentMinutes in bedtimeStartMinutes..bedtimeEndMinutes
+                currentMinutes in bedtimeStartMinutes until bedtimeEndMinutes
             } else {
+                // Midnight cross hone par (jaise raat 22:00 se subah 06:00)
                 currentMinutes >= bedtimeStartMinutes || currentMinutes < bedtimeEndMinutes
             }
         } catch (e: Exception) {
