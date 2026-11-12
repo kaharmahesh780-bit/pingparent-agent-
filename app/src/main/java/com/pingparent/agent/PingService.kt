@@ -73,8 +73,10 @@ class PingService : Service() {
             "lastSeen" to FieldValue.serverTimestamp()
         )
 
-        db.collection("devices").document(deviceId)
-            .set(pingData, SetOptions.merge())
+        ChildAuth.ensure {
+            db.collection("devices").document(deviceId)
+                .set(pingData, SetOptions.merge())
+        }
     }
 
     private fun syncInstalledApps() {
@@ -107,8 +109,10 @@ class PingService : Service() {
                 // डुप्लिकेट्स हटाएँ
                 val distinctApps = appsList.distinctBy { it["package"] }
 
-                db.collection("devices").document(deviceId)
-                    .set(mapOf("installedApps" to distinctApps), SetOptions.merge())
+                ChildAuth.ensure {
+                    db.collection("devices").document(deviceId)
+                        .set(mapOf("installedApps" to distinctApps), SetOptions.merge())
+                }
             } catch (e: Exception) {
                 e.printStackTrace()
             }
