@@ -2,6 +2,8 @@ package com.pingparent.agent
 
 import android.app.Activity
 import android.app.AlertDialog
+import android.app.admin.DevicePolicyManager
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
@@ -125,7 +127,20 @@ class MainActivity : Activity() {
         }
 
         btnPermissions.setOnClickListener {
-            startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+            val items = arrayOf(
+                "1. Accessibility Shield ON karo",
+                "2. Uninstall Protection (Device Admin) ON karo"
+            )
+            AlertDialog.Builder(this)
+                .setTitle("Permissions")
+                .setItems(items) { _, which ->
+                    if (which == 0) {
+                        startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+                    } else {
+                        requestDeviceAdmin()
+                    }
+                }
+                .show()
         }
 
         btnLockApp.setOnClickListener {
@@ -179,6 +194,22 @@ class MainActivity : Activity() {
                 e.printStackTrace()
             }
         }.start()
+    }
+
+    private fun requestDeviceAdmin() {
+        val admin = ComponentName(this, PingDeviceAdminReceiver::class.java)
+        val dpm = getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
+        if (dpm.isAdminActive(admin)) {
+            Toast.makeText(this, "Uninstall Protection pehle se ON hai", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val intent = Intent(DevicePolicyManager.ACTION_ADD_DEVICE_ADMIN)
+            .putExtra(DevicePolicyManager.EXTRA_DEVICE_ADMIN, admin)
+            .putExtra(
+                DevicePolicyManager.EXTRA_ADD_EXPLANATION,
+                "Ye ON rakhne se bacha PingParent ko uninstall nahi kar sakta."
+            )
+        startActivity(intent)
     }
 
     private fun syncBatteryStatus(pairingCode: String) {
