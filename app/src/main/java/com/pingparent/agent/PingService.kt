@@ -23,7 +23,7 @@ class PingService : Service() {
 
     private val db by lazy { FirebaseFirestore.getInstance() }
     private val handler = Handler(Looper.getMainLooper())
-    private val PING_INTERVAL = 60000L // 60s battery-friendly timer
+    private val PING_INTERVAL = 15 * 60 * 1000L // 15 minute (Firebase kharcha kam)
 
     private val pingRunnable = object : Runnable {
         override fun run() {
