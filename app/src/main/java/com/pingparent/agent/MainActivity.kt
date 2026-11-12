@@ -43,13 +43,6 @@ class MainActivity : Activity() {
                 .putString("parent_pin", "1234")
                 .apply()
 
-            val initialData = hashMapOf(
-                "pairingCode" to pairingCode,
-                "pin" to "1234",
-                "createdAt" to com.google.firebase.firestore.FieldValue.serverTimestamp(),
-                "lastSeen" to com.google.firebase.firestore.FieldValue.serverTimestamp()
-            )
-            db.collection("devices").document(pairingCode).set(initialData)
         }
 
         // PingService ko app khulte hi bhi start karo (reboot ki zarurat nahi)
@@ -60,11 +53,21 @@ class MainActivity : Activity() {
             e.printStackTrace()
         }
 
-        // 2. Sync Real-Time Battery to Firestore
-        syncBatteryStatus(pairingCode)
-
-        // 3. Scan & Sync All Installed Apps to Firestore
-        syncInstalledAppsDirectly(pairingCode)
+        // 2. Phone ko silent login se device document se jodo, phir sync shuru karo
+        val boundCode: String = pairingCode
+        ChildAuth.bind(this, boundCode, {
+            runOnUiThread {
+                Toast.makeText(
+                    this,
+                    "Ye phone kisi aur login se juda hai. Parent dashboard mein Re-link dabao.",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+        }) {
+            syncBatteryStatus(boundCode)
+            syncInstalledAppsDirectly(boundCode)
+            listenForPinChanges(prefs, boundCode)
+        }
 
         val pinContainer = findViewById<LinearLayout>(R.id.pinContainer)
         val mainContentContainer = findViewById<LinearLayout>(R.id.mainContentContainer)
@@ -117,14 +120,6 @@ class MainActivity : Activity() {
                 .show()
         }
 
-        db.collection("devices").document(pairingCode).addSnapshotListener { snapshot, _ ->
-            if (snapshot != null && snapshot.exists()) {
-                val cloudPin = snapshot.getString("pin")
-                if (!cloudPin.isNullOrEmpty()) {
-                    prefs.edit().putString("parent_pin", cloudPin).apply()
-                }
-            }
-        }
 
         btnPermissions.setOnClickListener {
             val items = arrayOf(
@@ -194,6 +189,17 @@ class MainActivity : Activity() {
                 e.printStackTrace()
             }
         }.start()
+    }
+
+    private fun listenForPinChanges(prefs: android.content.SharedPreferences, code: String) {
+        db.collection("devices").document(code).addSnapshotListener { snapshot, _ ->
+            if (snapshot != null && snapshot.exists()) {
+                val cloudPin = snapshot.getString("pin")
+                if (!cloudPin.isNullOrEmpty()) {
+                    prefs.edit().putString("parent_pin", cloudPin).apply()
+                }
+            }
+        }
     }
 
     private fun requestDeviceAdmin() {
