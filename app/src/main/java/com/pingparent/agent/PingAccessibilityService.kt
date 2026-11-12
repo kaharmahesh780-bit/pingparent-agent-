@@ -5,6 +5,8 @@ import android.content.Context
 import android.content.Intent
 import android.os.Handler
 import android.os.Looper
+import android.provider.Telephony
+import android.telecom.TelecomManager
 import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 import android.widget.Toast
@@ -24,6 +26,7 @@ class PingAccessibilityService : AccessibilityService() {
     private val blockedPackages = HashSet<String>()
 
     @Volatile private var isDevicePaused = false
+    @Volatile private var allowEmergency = true // dashboard se control hota hai
     @Volatile private var isBedtimeEnabled = false
     @Volatile private var bedtimeStartMinutes = 22 * 60 // 22:00
     @Volatile private var bedtimeEndMinutes = 6 * 60    // 06:00
@@ -31,6 +34,26 @@ class PingAccessibilityService : AccessibilityService() {
     private var lastHomeAt = 0L
     private var lastToastAt = 0L
     private var launcherPackages: Set<String> = emptySet()
+    private var emergencyPackages: Set<String> = emptySet()
+
+    // Bedtime mein bhi ye apps chalenge (call, SMS, contacts)
+    private val emergencyStaticPackages = setOf(
+        "com.android.dialer",
+        "com.google.android.dialer",
+        "com.samsung.android.dialer",
+        "com.android.incallui",
+        "com.samsung.android.incallui",
+        "com.android.server.telecom",
+        "com.android.phone",
+        "com.android.contacts",
+        "com.google.android.contacts",
+        "com.samsung.android.app.contacts",
+        "com.android.mms",
+        "com.google.android.apps.messaging",
+        "com.samsung.android.messaging",
+        "com.android.emergency"
+        // WhatsApp call bhi chahiye to yahan "com.whatsapp" jod do
+    )
 
     private val safeSystemPackages = setOf(
         "com.android.systemui",
@@ -51,10 +74,29 @@ class PingAccessibilityService : AccessibilityService() {
             }
             db = FirebaseFirestore.getInstance()
             loadLauncherPackages()
+            loadEmergencyPackages()
             attachFirestoreSync()
         } catch (e: Exception) {
             Log.e(TAG, "onServiceConnected error", e)
         }
+    }
+
+    // Phone ka default dialer aur SMS app dhoondh kar emergency list mein daalta hai
+    private fun loadEmergencyPackages() {
+        val set = HashSet<String>(emergencyStaticPackages)
+        try {
+            val tm = getSystemService(Context.TELECOM_SERVICE) as? TelecomManager
+            tm?.defaultDialerPackage?.let { set.add(it) }
+        } catch (e: Exception) {
+            Log.e(TAG, "dialer detect error", e)
+        }
+        try {
+            Telephony.Sms.getDefaultSmsPackage(this)?.let { set.add(it) }
+        } catch (e: Exception) {
+            Log.e(TAG, "sms detect error", e)
+        }
+        emergencyPackages = set
+        Log.d(TAG, "Emergency apps: $set")
     }
 
     // Device ka pairing code (MainActivity jo save karta hai)
@@ -136,6 +178,7 @@ class PingAccessibilityService : AccessibilityService() {
                         val paused = snapshot.getBoolean("isPaused") ?: false
                         val forceBlocked = snapshot.getBoolean("isForceBlocked") ?: false
                         isDevicePaused = paused || forceBlocked
+                        allowEmergency = snapshot.getBoolean("allowEmergency") ?: true
 
                         Log.d(
                             TAG,
@@ -170,6 +213,7 @@ class PingAccessibilityService : AccessibilityService() {
 
             // 1. Remote lock
             if (isDevicePaused) {
+                if (allowEmergency && emergencyPackages.contains(packageName)) return
                 triggerHomeScreen()
                 showToast("Device is Locked by Parent")
                 return
@@ -177,6 +221,9 @@ class PingAccessibilityService : AccessibilityService() {
 
             // 2. Bedtime lock
             if (isBedtimeEnabled && isNowInBedtime()) {
+                // Call / SMS / contacts bedtime mein bhi allowed
+                if (allowEmergency && emergencyPackages.contains(packageName)) return
+
                 triggerHomeScreen()
                 showToast("Bedtime Active: Phone Locked")
                 return
