@@ -7,6 +7,7 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.os.BatteryManager
+import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import android.view.View
@@ -47,6 +48,14 @@ class MainActivity : Activity() {
                 "lastSeen" to com.google.firebase.firestore.FieldValue.serverTimestamp()
             )
             db.collection("devices").document(pairingCode).set(initialData)
+        }
+
+        // PingService ko app khulte hi bhi start karo (reboot ki zarurat nahi)
+        try {
+            val svc = Intent(this, PingService::class.java)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(svc) else startService(svc)
+        } catch (e: Exception) {
+            e.printStackTrace()
         }
 
         // 2. Sync Real-Time Battery to Firestore
