@@ -16,6 +16,15 @@ android {
         versionName = "1.0"
     }
 
+    signingConfigs {
+        getByName("debug") {
+            storeFile = file("pingparent.keystore")
+            storePassword = "pingparent123"
+            keyAlias = "pingparent"
+            keyPassword = "pingparent123"
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
