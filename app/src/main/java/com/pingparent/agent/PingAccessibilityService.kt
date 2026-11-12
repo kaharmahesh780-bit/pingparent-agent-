@@ -350,7 +350,13 @@ class PingAccessibilityService : AccessibilityService() {
         }
     }
 
+    // Ek hi app ka alert 30 second mein sirf ek baar (har screen event par nahi)
+    private val lastViolationAt = HashMap<String, Long>()
+
     private fun logViolation(blockedApp: String) {
+        val now = System.currentTimeMillis()
+        if (now - (lastViolationAt[blockedApp] ?: 0L) < 30000) return
+        lastViolationAt[blockedApp] = now
         try {
             val deviceId = readDeviceId()
             if (deviceId.isEmpty()) return
