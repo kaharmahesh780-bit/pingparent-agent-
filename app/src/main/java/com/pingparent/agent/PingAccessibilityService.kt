@@ -131,7 +131,17 @@ class PingAccessibilityService : AccessibilityService() {
         }
     }
 
+    private var lastAttachTry = 0L
+
+    // Silent login ke baad hi Firestore se jodo (15 second mein ek hi baar try)
     private fun attachFirestoreSync() {
+        val now = System.currentTimeMillis()
+        if (now - lastAttachTry < 15000) return
+        lastAttachTry = now
+        ChildAuth.ensure { attachFirestoreSyncNow() }
+    }
+
+    private fun attachFirestoreSyncNow() {
         try {
             val deviceId = readDeviceId()
             if (deviceId.isEmpty()) {
@@ -149,6 +159,9 @@ class PingAccessibilityService : AccessibilityService() {
                 .addSnapshotListener { snapshot, error ->
                     if (error != null) {
                         Log.e(TAG, "Snapshot error", error)
+                        docListener?.remove()
+                        docListener = null
+                        attachedDeviceId = "" // agle event par dobara jodega
                         return@addSnapshotListener
                     }
                     if (snapshot == null || !snapshot.exists()) return@addSnapshotListener
