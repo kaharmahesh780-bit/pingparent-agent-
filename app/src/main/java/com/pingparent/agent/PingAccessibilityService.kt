@@ -27,6 +27,8 @@ class PingAccessibilityService : AccessibilityService() {
 
     @Volatile private var isDevicePaused = false
     @Volatile private var allowEmergency = true // dashboard se control hota hai
+    @Volatile private var tamperLock = false     // Settings Lock (dashboard se)
+    private var lastTamperLogAt = 0L
     @Volatile private var isBedtimeEnabled = false
     @Volatile private var bedtimeStartMinutes = 22 * 60 // 22:00
     @Volatile private var bedtimeEndMinutes = 6 * 60    // 06:00
@@ -53,6 +55,16 @@ class PingAccessibilityService : AccessibilityService() {
         "com.samsung.android.messaging",
         "com.android.emergency"
         // WhatsApp call bhi chahiye to yahan "com.whatsapp" jod do
+    )
+
+    // Tamper Lock ON hone par ye apps bhi band (Settings, uninstall screen)
+    private val settingsPackages = setOf(
+        "com.android.settings",
+        "com.miui.securitycenter",
+        "com.google.android.packageinstaller",
+        "com.android.packageinstaller",
+        "com.miui.packageinstaller",
+        "com.samsung.android.packageinstaller"
     )
 
     private val safeSystemPackages = setOf(
@@ -179,6 +191,7 @@ class PingAccessibilityService : AccessibilityService() {
                         val forceBlocked = snapshot.getBoolean("isForceBlocked") ?: false
                         isDevicePaused = paused || forceBlocked
                         allowEmergency = snapshot.getBoolean("allowEmergency") ?: true
+                        tamperLock = snapshot.getBoolean("tamperLock") ?: false
 
                         Log.d(
                             TAG,
@@ -226,6 +239,14 @@ class PingAccessibilityService : AccessibilityService() {
 
                 triggerHomeScreen()
                 showToast("Bedtime Active: Phone Locked")
+                return
+            }
+
+            // 2.5 Settings Lock (Accessibility band karne / uninstall se rokta hai)
+            if (tamperLock && settingsPackages.contains(packageName)) {
+                triggerHomeScreen()
+                showToast("Settings Parent ne lock ki hai")
+                logTamperAttempt(packageName)
                 return
             }
 
@@ -293,6 +314,26 @@ class PingAccessibilityService : AccessibilityService() {
             }
         } catch (e: Exception) {
             false
+        }
+    }
+
+    private fun logTamperAttempt(pkg: String) {
+        val now = System.currentTimeMillis()
+        if (now - lastTamperLogAt < 60000) return // Firebase kharcha bachane ke liye 1 min mein ek baar
+        lastTamperLogAt = now
+        try {
+            val deviceId = readDeviceId()
+            if (deviceId.isEmpty()) return
+            val alertData = hashMapOf(
+                "keyword" to "Settings Open Attempt",
+                "app" to pkg,
+                "category" to "Tamper",
+                "timestamp" to FieldValue.serverTimestamp()
+            )
+            (db ?: FirebaseFirestore.getInstance()).collection("devices").document(deviceId)
+                .collection("alerts")
+                .add(alertData)
+        } catch (e: Exception) {
         }
     }
 
