@@ -3,6 +3,8 @@ package com.pingparent.agent
 import android.app.Activity
 import android.app.AlertDialog
 import android.app.admin.DevicePolicyManager
+import android.app.AppOpsManager
+import android.os.Process
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
@@ -125,27 +127,7 @@ class MainActivity : Activity() {
         }
 
 
-        btnPermissions.setOnClickListener {
-            val items = arrayOf(
-                "1. Accessibility Shield ON karo",
-                "2. Uninstall Protection (Device Admin) ON karo"
-            )
-            val items2 = arrayOf(
-                "1. Accessibility Shield ON karo",
-                "2. Uninstall Protection (Device Admin) ON karo",
-                "3. Usage Access ON karo (Screen Time ke liye)"
-            )
-            AlertDialog.Builder(this)
-                .setTitle("Permissions")
-                .setItems(items2) { _, which ->
-                    when (which) {
-                        0 -> startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
-                        1 -> requestDeviceAdmin()
-                        2 -> startActivity(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS))
-                    }
-                }
-                .show()
-        }
+        btnPermissions.setOnClickListener { startNextMissingPermission() }
 
         btnLockApp.setOnClickListener {
             mainContentContainer.visibility = View.GONE
@@ -159,6 +141,68 @@ class MainActivity : Activity() {
         val pairingCode = prefs.getString("pairing_code", null)
         if (pairingCode != null) {
             syncInstalledAppsDirectly(pairingCode)
+        }
+        // Permission screen se wapas aate hi khud agli zaroori permission khol deta hai
+        if (setupInProgress) {
+            setupInProgress = false
+            Handler(Looper.getMainLooper()).postDelayed({ startNextMissingPermission(showDoneMsg = true) }, 400)
+        }
+    }
+
+    private var setupInProgress = false
+
+    private fun isAccessibilityOn(): Boolean {
+        return try {
+            val enabled = android.provider.Settings.Secure.getInt(
+                contentResolver, android.provider.Settings.Secure.ACCESSIBILITY_ENABLED, 0
+            )
+            if (enabled != 1) return false
+            val list = android.provider.Settings.Secure.getString(
+                contentResolver, android.provider.Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
+            ) ?: ""
+            list.contains(packageName)
+        } catch (e: Exception) { false }
+    }
+
+    private fun isDeviceAdminOn(): Boolean {
+        return try {
+            val dpm = getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
+            dpm.isAdminActive(ComponentName(this, PingDeviceAdminReceiver::class.java))
+        } catch (e: Exception) { false }
+    }
+
+    private fun isUsageAccessOn(): Boolean {
+        return try {
+            val appOps = getSystemService(Context.APP_OPS_SERVICE) as AppOpsManager
+            val mode = appOps.unsafeCheckOpNoThrow(
+                AppOpsManager.OPSTR_GET_USAGE_STATS, Process.myUid(), packageName
+            )
+            mode == AppOpsManager.MODE_ALLOWED
+        } catch (e: Exception) { false }
+    }
+
+    // Ek hi button: jo permission abhi tak ON nahi hui, uski screen khud khol deta hai.
+    // Us screen se ON karke "Back" dabate hi (onResume) ye agli missing permission khud khol dega.
+    private fun startNextMissingPermission(showDoneMsg: Boolean = false) {
+        when {
+            !isAccessibilityOn() -> {
+                Toast.makeText(this, "Step 1/3: Accessibility ko PingParent ke liye ON karo", Toast.LENGTH_LONG).show()
+                setupInProgress = true
+                startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+            }
+            !isDeviceAdminOn() -> {
+                Toast.makeText(this, "Step 2/3: Activate dabao", Toast.LENGTH_LONG).show()
+                setupInProgress = true
+                requestDeviceAdmin()
+            }
+            !isUsageAccessOn() -> {
+                Toast.makeText(this, "Step 3/3: PingParent ko ON karo", Toast.LENGTH_LONG).show()
+                setupInProgress = true
+                startActivity(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS))
+            }
+            else -> {
+                if (showDoneMsg) Toast.makeText(this, "Sab Permissions ON ho gayi ✅", Toast.LENGTH_LONG).show()
+            }
         }
     }
 
