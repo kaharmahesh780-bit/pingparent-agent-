@@ -67,6 +67,117 @@ class PingAccessibilityService : AccessibilityService() {
         "com.samsung.android.packageinstaller"
     )
 
+    // ---------- Adult content block ----------
+    private val browserPackages = setOf(
+        "com.android.chrome", "com.chrome.beta", "com.chrome.dev", "com.chrome.canary",
+        "com.brave.browser", "com.microsoft.emmx", "org.mozilla.firefox", "org.mozilla.firefox_beta",
+        "com.sec.android.app.sbrowser", "com.opera.browser", "com.opera.mini.native",
+        "com.mi.globalbrowser", "com.android.browser", "com.duckduckgo.mobile.android",
+        "com.vivaldi.browser", "com.UCMobile.intl"
+    )
+
+    // Ye shabd kisi word ki shuruaat mein ho to block (porn, pornhub, xxx...)
+    private val adultStems = listOf(
+        "porn", "xxx", "nsfw", "hentai", "xvideo", "xnxx", "xhamster", "redtube",
+        "youporn", "onlyfans", "erotic", "nudes", "nude", "chudai", "camgirl"
+    )
+
+    // Poora word milna chahiye (sex lekin Essex nahi)
+    private val adultWords = setOf(
+        "sex", "sexy", "naked", "nangi", "boobs", "pussy", "milf", "bdsm", "fetish"
+    )
+
+    // Kai shabdon ke phrase
+    private val adultPhrases = listOf(
+        "bf video", "bf film", "blue film", "sex video", "sexy video", "mms video", "desi sex"
+    )
+
+    // Hindi / Marathi (Devanagari)
+    private val adultDevanagari = listOf("सेक्स", "पोर्न", "चुदाई", "नंगी", "ब्लू फिल्म")
+
+    private var lastBrowserScanAt = 0L
+    private var lastAdultLogAt = 0L
+
+    private fun findAdultTerm(raw: String): String? {
+        if (raw.isBlank()) return null
+        for (d in adultDevanagari) {
+            if (raw.contains(d)) return d
+        }
+        val tokens = raw.lowercase().split(Regex("[^a-z0-9]+")).filter { it.isNotEmpty() }
+        if (tokens.isEmpty()) return null
+        for (t in tokens) {
+            if (adultWords.contains(t)) return t
+            for (s in adultStems) {
+                if (t.startsWith(s)) return s
+            }
+        }
+        val joined = " " + tokens.joinToString(" ") + " "
+        for (p in adultPhrases) {
+            if (joined.contains(" $p ")) return p
+        }
+        return null
+    }
+
+    // Browser ke URL bar ka text padhta hai (800ms mein ek baar)
+    private fun scanBrowserUrl(pkg: String): String? {
+        val now = System.currentTimeMillis()
+        if (now - lastBrowserScanAt < 800) return null
+        lastBrowserScanAt = now
+        val root = rootInActiveWindow ?: return null
+        val ids = listOf(
+            "$pkg:id/url_bar", "$pkg:id/location_bar_edit_text",
+            "$pkg:id/mozac_browser_toolbar_url_view", "$pkg:id/url_field", "$pkg:id/url"
+        )
+        for (id in ids) {
+            val nodes = root.findAccessibilityNodeInfosByViewId(id) ?: continue
+            for (n in nodes) {
+                val t = n.text?.toString() ?: continue
+                val hit = findAdultTerm(t)
+                if (hit != null) return hit
+            }
+        }
+        return null
+    }
+
+    private fun checkAdultContent(event: AccessibilityEvent, pkg: String): String? {
+        if (pkg == this.packageName) return null
+        val type = event.eventType
+        // 1. Kisi bhi app ke search box mein type kiya hua text
+        if (type == AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED && !event.isPassword) {
+            val typed = event.text?.joinToString(" ") ?: ""
+            val hit = findAdultTerm(typed)
+            if (hit != null) return hit
+        }
+        // 2. Browser ka URL
+        if (browserPackages.contains(pkg) &&
+            (type == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED ||
+                type == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED)
+        ) {
+            return scanBrowserUrl(pkg)
+        }
+        return null
+    }
+
+    private fun logAdultAttempt(pkg: String, term: String) {
+        val now = System.currentTimeMillis()
+        if (now - lastAdultLogAt < 30000) return // 30 second mein ek hi alert
+        lastAdultLogAt = now
+        try {
+            val deviceId = readDeviceId()
+            if (deviceId.isEmpty()) return
+            val alertData = hashMapOf(
+                "keyword" to "Adult Content: $term",
+                "app" to pkg,
+                "category" to "Adult Content",
+                "timestamp" to FieldValue.serverTimestamp()
+            )
+            (db ?: FirebaseFirestore.getInstance()).collection("devices").document(deviceId)
+                .collection("alerts")
+                .add(alertData)
+        } catch (e: Exception) {
+        }
+    }
+
     private val safeSystemPackages = setOf(
         "com.android.systemui",
         "com.miui.home",
@@ -260,6 +371,15 @@ class PingAccessibilityService : AccessibilityService() {
                 triggerHomeScreen()
                 showToast("Settings Parent ne lock ki hai")
                 logTamperAttempt(packageName)
+                return
+            }
+
+            // 2.7 Adult content block (search ya URL mein adult shabd)
+            val adultTerm = checkAdultContent(event, packageName)
+            if (adultTerm != null) {
+                triggerHomeScreen()
+                showToast("Ye search allowed nahi hai")
+                logAdultAttempt(packageName, adultTerm)
                 return
             }
 
