@@ -47,10 +47,21 @@
         android:textSize="13sp"
         android:textStyle="bold" />
 
+    <Button
+        android:id="@+id/btnEmergencyCall"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="32dp"
+        android:backgroundTint="#10B981"
+        android:paddingHorizontal="28dp"
+        android:text="📞 Emergency Call"
+        android:textColor="#020617"
+        android:textStyle="bold" />
+
     <TextView
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:layout_marginTop="60dp"
+        android:layout_marginTop="40dp"
         android:text="Protected by PingParent Shield"
         android:textColor="#475569"
         android:textSize="12sp"
