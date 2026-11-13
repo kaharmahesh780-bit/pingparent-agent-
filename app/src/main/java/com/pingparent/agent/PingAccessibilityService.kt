@@ -324,7 +324,9 @@ class PingAccessibilityService : AccessibilityService() {
                                 "inBedtime=${isNowInBedtime()}"
                         )
 
-                        if (isDevicePaused || (isBedtimeEnabled && isNowInBedtime())) {
+                        if (isDevicePaused) {
+                            showPauseScreen()
+                        } else if (isBedtimeEnabled && isNowInBedtime()) {
                             triggerHomeScreen()
                         }
                     } catch (e: Exception) {
@@ -344,6 +346,14 @@ class PingAccessibilityService : AccessibilityService() {
 
             // Agar pairing code baad mein bana ya badla, listener dobara jodo
             if (readDeviceId() != attachedDeviceId) attachFirestoreSync()
+
+            // Remote Pause: poora phone freeze (home screen bhi). Sirf emergency apps allowed.
+            if (isDevicePaused) {
+                if (packageName == this.packageName || packageName == "com.android.systemui") return
+                if (allowEmergency && emergencyPackages.contains(packageName)) return
+                showPauseScreen()
+                return
+            }
 
             if (safeSystemPackages.contains(packageName)) return
             if (launcherPackages.contains(packageName)) return
@@ -396,6 +406,25 @@ class PingAccessibilityService : AccessibilityService() {
             }
         } catch (e: Exception) {
             Log.e(TAG, "event error", e)
+        }
+    }
+
+    private var lastPauseLaunchAt = 0L
+
+    // Full-screen "Device Paused" lock screen dikhata hai (pehle HOME, phir lock screen)
+    private fun showPauseScreen() {
+        val now = System.currentTimeMillis()
+        if (now - lastPauseLaunchAt < 1500) return
+        lastPauseLaunchAt = now
+        triggerHomeScreen()
+        Handler(Looper.getMainLooper()).post {
+            try {
+                val i = Intent(this, PauseActivity::class.java)
+                i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                startActivity(i)
+            } catch (e: Exception) {
+                Log.e(TAG, "pause screen error", e)
+            }
         }
     }
 
@@ -481,26 +510,4 @@ class PingAccessibilityService : AccessibilityService() {
             val deviceId = readDeviceId()
             if (deviceId.isEmpty()) return
 
-            val alertData = hashMapOf(
-                "keyword" to "Blocked App Opened",
-                "app" to blockedApp,
-                "category" to "Shield Block",
-                "timestamp" to FieldValue.serverTimestamp()
-            )
-
-            (db ?: FirebaseFirestore.getInstance()).collection("devices").document(deviceId)
-                .collection("alerts")
-                .add(alertData)
-        } catch (e: Exception) {
-        }
-    }
-
-    override fun onDestroy() {
-        super.onDestroy()
-        docListener?.remove()
-        docListener = null
-        attachedDeviceId = ""
-    }
-
-    override fun onInterrupt() {}
-}
+            
