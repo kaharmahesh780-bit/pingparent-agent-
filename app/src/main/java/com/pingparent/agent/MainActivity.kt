@@ -67,6 +67,8 @@ class MainActivity : Activity() {
             syncBatteryStatus(boundCode)
             syncInstalledAppsDirectly(boundCode)
             listenForPinChanges(prefs, boundCode)
+            // Secret token device document mein (QR se jodne ke liye)
+            db.collection("devices").document(boundCode).update("pairToken", getPairToken(prefs))
         }
 
         val pinContainer = findViewById<LinearLayout>(R.id.pinContainer)
@@ -81,7 +83,9 @@ class MainActivity : Activity() {
         val tvAgentCode = findViewById<TextView>(R.id.tvAgentCode)
 
         tvDisplayPairingCode.text = "Pairing Code: $pairingCode"
-        tvAgentCode.text = "Pairing Code: $pairingCode"
+        tvAgentCode.text = "Pairing Code: $pairingCode (QR ke liye tap karo)"
+        val qrCode: String = pairingCode
+        tvAgentCode.setOnClickListener { showQrDialog(qrCode, getPairToken(prefs)) }
 
         btnUnlock.setOnClickListener {
             val enteredPin = etPin.text.toString().trim()
@@ -200,6 +204,54 @@ class MainActivity : Activity() {
                 }
             }
         }
+    }
+
+    // Random secret token (ek baar banta hai, QR ke saath parent ko milta hai)
+    private fun getPairToken(prefs: android.content.SharedPreferences): String {
+        val existing = prefs.getString("pair_token", null)
+        if (!existing.isNullOrEmpty()) return existing
+        val chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+        val rnd = java.security.SecureRandom()
+        val token = (1..12).map { chars[rnd.nextInt(chars.length)] }.joinToString("")
+        prefs.edit().putString("pair_token", token).apply()
+        return token
+    }
+
+    private fun makeQr(text: String): android.graphics.Bitmap {
+        val size = 600
+        val matrix = com.google.zxing.MultiFormatWriter()
+            .encode(text, com.google.zxing.BarcodeFormat.QR_CODE, size, size)
+        val bmp = android.graphics.Bitmap.createBitmap(size, size, android.graphics.Bitmap.Config.RGB_565)
+        for (x in 0 until size) {
+            for (y in 0 until size) {
+                bmp.setPixel(x, y, if (matrix.get(x, y)) android.graphics.Color.BLACK else android.graphics.Color.WHITE)
+            }
+        }
+        return bmp
+    }
+
+    private fun showQrDialog(code: String, token: String) {
+        val payload = "$code:$token"
+        val box = LinearLayout(this)
+        box.orientation = LinearLayout.VERTICAL
+        box.setPadding(40, 24, 40, 8)
+
+        val img = android.widget.ImageView(this)
+        img.setImageBitmap(makeQr(payload))
+        box.addView(img)
+
+        val txt = TextView(this)
+        txt.text = payload
+        txt.textSize = 13f
+        txt.gravity = android.view.Gravity.CENTER
+        txt.setTextIsSelectable(true)
+        box.addView(txt)
+
+        AlertDialog.Builder(this)
+            .setTitle("Parent ke phone se scan karo")
+            .setView(box)
+            .setPositiveButton("Band karo", null)
+            .show()
     }
 
     private fun requestDeviceAdmin() {
