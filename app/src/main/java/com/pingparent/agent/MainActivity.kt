@@ -130,13 +130,18 @@ class MainActivity : Activity() {
                 "1. Accessibility Shield ON karo",
                 "2. Uninstall Protection (Device Admin) ON karo"
             )
+            val items2 = arrayOf(
+                "1. Accessibility Shield ON karo",
+                "2. Uninstall Protection (Device Admin) ON karo",
+                "3. Usage Access ON karo (Screen Time ke liye)"
+            )
             AlertDialog.Builder(this)
                 .setTitle("Permissions")
-                .setItems(items) { _, which ->
-                    if (which == 0) {
-                        startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
-                    } else {
-                        requestDeviceAdmin()
+                .setItems(items2) { _, which ->
+                    when (which) {
+                        0 -> startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+                        1 -> requestDeviceAdmin()
+                        2 -> startActivity(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS))
                     }
                 }
                 .show()
