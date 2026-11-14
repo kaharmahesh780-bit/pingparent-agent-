@@ -131,6 +131,8 @@ class MainActivity : Activity() {
 
         btnPermissions.setOnClickListener { startNextMissingPermission() }
 
+        findViewById<Button>(R.id.btnUnlinkParent)?.setOnClickListener { confirmUnlinkParent() }
+
         btnLockApp.setOnClickListener {
             mainContentContainer.visibility = View.GONE
             pinContainer.visibility = View.VISIBLE
@@ -302,6 +304,33 @@ class MainActivity : Activity() {
             .setTitle("Parent ke phone se scan karo")
             .setView(box)
             .setPositiveButton("Band karo", null)
+            .show()
+    }
+
+    // Agar ye device kisi purane/galat parent account se juda reh gaya ho, usko hatata hai.
+    private fun confirmUnlinkParent() {
+        val prefs = getSharedPreferences("PingParentPrefs", Context.MODE_PRIVATE)
+        val code = prefs.getString("pairing_code", null) ?: prefs.getString("paired_code", "") ?: ""
+        if (code.isEmpty()) {
+            Toast.makeText(this, "Pehle PIN daal kar app unlock karo", Toast.LENGTH_SHORT).show()
+            return
+        }
+        AlertDialog.Builder(this)
+            .setTitle("Parent Unlink karein?")
+            .setMessage("Is phone ka purana parent account hata diya jayega. Parent ko naya QR scan karke dobara jodna hoga.")
+            .setPositiveButton("Haan, Unlink karo") { _, _ ->
+                ChildAuth.ensure {
+                    db.collection("devices").document(code)
+                        .update("parentUid", com.google.firebase.firestore.FieldValue.delete())
+                        .addOnSuccessListener {
+                            Toast.makeText(this, "Parent unlink ho gaya ✅", Toast.LENGTH_LONG).show()
+                        }
+                        .addOnFailureListener {
+                            Toast.makeText(this, "Unlink nahi hua, dobara try karo", Toast.LENGTH_LONG).show()
+                        }
+                }
+            }
+            .setNegativeButton("Cancel", null)
             .show()
     }
 
